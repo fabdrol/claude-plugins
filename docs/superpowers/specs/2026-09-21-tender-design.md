@@ -14,8 +14,8 @@ it. Tender shunts that work to a cheap model via OpenRouter so the premium model
 hard problems.
 
 Tender is sub-project one of three in the "Agent Delegation" concept
-(vault: `Projects/AI Workflow/Agent Delegation/Concept`). It is independent of
-the other two (worker service, usage-aware routing) and ships first.
+(`docs/agent-delegation-concept.md`). It is independent of the other two
+(worker service, usage-aware routing) and ships first.
 
 A tender is the small boat that runs errands so the yacht doesn't have to move.
 
@@ -55,14 +55,14 @@ claude-plugins/
     skills/
       read/SKILL.md                   # surfaces as /tender:read
       write/SKILL.md                  # surfaces as /tender:write
-    evals/
-      run.sh
-      hook-evals.json
-      bash-hook-evals.json
-      script-evals.sh                 # against local stub
-      benchmarks.json
+    tests/
+      run.sh                          # runs hooks.sh + scripts.sh; --benchmark
+      lib.sh                          # assertion helpers
+      hooks.sh                        # hook decision tests (offline)
+      scripts.sh                      # lib + script tests against the stub
+      benchmark.sh                    # real key: token saving on fixtures
       fixtures/
-      stub/openrouter-stub.sh         # fake endpoint for offline tests
+      stub/openrouter-stub.py         # fake endpoint for offline tests
 ```
 
 Install:
@@ -257,19 +257,24 @@ re-send paths for follow-ups, and verify line numbers before editing.
 
 ## 11. Testing
 
-- `evals/run.sh` — hook decision tests. Generates fixture files of given line
+- `tests/hooks.sh` — hook decision tests. Generates fixture files of given line
   counts, feeds JSON to each hook, asserts allow/deny. Runs offline. Includes
   fail-open, disabled, targeted-read, small-file, piped, redirected,
   `head -n`, and `sed -n` range cases.
-- `evals/script-evals.sh` — starts `stub/openrouter-stub.sh` (a tiny local
-  HTTP responder returning canned completions and usage), points
+- `tests/scripts.sh` — starts `stub/openrouter-stub.py` (a tiny local
+  HTTP responder returning canned completions and usage; behaviour picked by
+  the requested model name, e.g. `stub/error`), points
   `TENDER_API_URL` at it, and asserts: happy path output and log line;
   missing file; missing reference; each guard layer refusing; `--allow-ignored`;
   `TENDER_ALLOW_SECRETS`; fence stripping; empty response; error envelope;
   oversize payload.
-- `evals/run.sh --benchmark` — with a real key, runs the fixture questions and
+- `tests/run.sh --benchmark` — with a real key, runs the fixture questions and
   reports tokens Claude would have read versus tokens in the answer.
-- `shellcheck` on every script.
+- `shellcheck` on every script when installed (`brew install shellcheck`).
+- All scripts target bash 3.2 (macOS default) and must also run on Linux
+  bash 5: no `mapfile`, associative arrays, `${var,,}`, or `set -u` with
+  possibly-empty arrays. `tests/` is used instead of `evals/` because
+  `claude plugin eval` reserves that directory for its own YAML case format.
 
 ## 12. Error handling summary
 
