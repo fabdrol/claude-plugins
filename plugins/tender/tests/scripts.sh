@@ -353,4 +353,23 @@ assert_exit "bad line does not abort" 0 $rc
 assert_contains "bad line reported" "$out" "1 unparseable line(s) skipped"
 assert_contains "string cost counted as zero" "$out" "5 calls, 3 ok, 1 error, 1 refused, \$0.03"
 
+# ---------------------------------------------------------------- tender-doctor
+echo "-- tender-doctor"
+out=$(TENDER_READER_MODEL=stub/ok "$SCRIPTS/tender-doctor" 2>&1); rc=$?
+assert_exit "doctor ok → 0" 0 $rc
+assert_contains "doctor reports jq" "$out" "ok    jq"
+assert_contains "doctor reports key" "$out" "ok    OPENROUTER_API_KEY"
+assert_contains "doctor reports log" "$out" "ok    log writable"
+assert_contains "doctor reports models" "$out" "reader model: stub/ok"
+assert_contains "doctor reports call" "$out" "ok    OpenRouter call"
+assert_not_contains "doctor never prints the key" "$out" "test-key"
+
+out=$(OPENROUTER_API_KEY= "$SCRIPTS/tender-doctor" 2>&1); rc=$?
+assert_exit "doctor without key → 1" 1 $rc
+assert_contains "doctor key remediation" "$out" "openrouter.ai/keys"
+
+out=$(TENDER_READER_MODEL=stub/error "$SCRIPTS/tender-doctor" 2>&1); rc=$?
+assert_exit "doctor api failure → 1" 1 $rc
+assert_contains "doctor shows api error" "$out" "stub failure"
+
 report

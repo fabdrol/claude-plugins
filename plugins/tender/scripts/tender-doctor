@@ -1,0 +1,38 @@
+#!/bin/bash
+# Verify tender's setup: tools, key, log path and one tiny OpenRouter call.
+# Usage: tender-doctor
+
+. "$(cd "$(dirname "$0")" && pwd)/lib/openrouter.sh"
+
+ok()   { echo "ok    $1"; }
+fail() { echo "FAIL  $1"; [ -n "${2:-}" ] && echo "      $2"; exit 1; }
+
+command -v jq   >/dev/null 2>&1 && ok "jq found"   || fail "jq missing"   "brew install jq / apt install jq"
+command -v curl >/dev/null 2>&1 && ok "curl found" || fail "curl missing" "brew install curl / apt install curl"
+
+if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+  ok "OPENROUTER_API_KEY set"
+else
+  fail "OPENROUTER_API_KEY is not set" "Create a key at https://openrouter.ai/keys and export it in your shell profile."
+fi
+
+if mkdir -p "$(dirname "$TENDER_LOG")" 2>/dev/null && touch "$TENDER_LOG" 2>/dev/null; then
+  ok "log writable: $TENDER_LOG"
+else
+  fail "log not writable: $TENDER_LOG" "Set TENDER_LOG to a writable path."
+fi
+
+echo "      reader model: $TENDER_READER_MODEL"
+echo "      writer model: $TENDER_WRITER_MODEL"
+echo "      threshold:    $TENDER_MIN_LINES lines"
+echo "      endpoint:     $TENDER_API_URL"
+
+tender_tmpfile sys || exit 1
+tender_tmpfile msg || exit 1
+printf 'You are a connectivity check. Reply with the single word OK.' > "$sys"
+printf 'ping' > "$msg"
+if tender_invoke doctor "$TENDER_READER_MODEL" "$sys" "$msg" 0 >/dev/null; then
+  ok "OpenRouter call succeeded $TENDER_LAST_SUMMARY"
+else
+  fail "OpenRouter call failed" "See the error above. Check the key, the model name and network access."
+fi
