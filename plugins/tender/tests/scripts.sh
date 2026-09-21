@@ -164,6 +164,7 @@ b" "$out"
 # ---------------------------------------------------------------- lib: guard
 echo "-- lib: guard"
 G="$TMP/guard"; rm -rf "$G"; mkdir -p "$G/sub/.aws" "$G/repo"
+(cd "$G" && git init -q)   # files under $G are governed by this empty repo, not the outer repo's .gitignore
 printf 'SAFE=1\n' > "$G/.env"
 printf 'SAFE=1\n' > "$G/.env.local"
 printf 'EXAMPLE=\n' > "$G/.env.example"

@@ -250,9 +250,10 @@ tender_guard_ignored() {
 # tender_guard_content <path>: prints the first matching line number, 0 on hit.
 tender_guard_content() {
   local line
-  line=$(grep -nE "$TENDER_SECRET_RE" "$1" 2>/dev/null | head -1 | cut -d: -f1)
+  # -- because TENDER_SECRET_RE starts with a dash; BSD grep would read it as an option.
+  line=$(grep -nE -- "$TENDER_SECRET_RE" "$1" 2>/dev/null | head -1 | cut -d: -f1)
   if [ -z "$line" ]; then
-    line=$(grep -niE "$TENDER_ASSIGN_RE" "$1" 2>/dev/null | head -1 | cut -d: -f1)
+    line=$(grep -niE -- "$TENDER_ASSIGN_RE" "$1" 2>/dev/null | head -1 | cut -d: -f1)
   fi
   [ -n "$line" ] || return 1
   printf '%s' "$line"
