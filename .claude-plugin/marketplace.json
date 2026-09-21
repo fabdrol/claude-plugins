@@ -2,9 +2,9 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "fabdrol",
   "version": "0.1.0",
-  "description": "Fabian Droll's Claude Code plugins.",
+  "description": "Claude Code plugins by fabdrol.",
   "owner": {
-    "name": "Fabian Droll"
+    "name": "fabdrol"
   },
   "plugins": [
     {
@@ -12,7 +12,7 @@
       "description": "Shunts I/O-heavy work to a cheap model via OpenRouter. Hooks block large file reads and redirect to tender-read/tender-write scripts, with a secrets guard and a per-call cost log.",
       "version": "0.1.0",
       "author": {
-        "name": "Fabian Droll"
+        "name": "fabdrol"
       },
       "repository": "https://github.com/fabdrol/claude-plugins",
       "source": "./plugins/tender",
