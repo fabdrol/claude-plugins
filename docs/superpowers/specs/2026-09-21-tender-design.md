@@ -99,8 +99,12 @@ the current format:
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"…"}}
 ```
 
-Allow is `permissionDecision: "allow"`. Fail-open allows carry
-`additionalContext` with a one-line note ("tender installed but
+"Allow" means the hook expresses no opinion: it exits 0 with no output, so
+the call continues through the user's normal permission flow. The hook never
+emits `permissionDecision: "allow"`, because that value bypasses the user's
+permission prompts and settings rules. Fail-open allows print
+`{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"…"}}`
+with no `permissionDecision`, carrying a one-line note ("tender installed but
 OPENROUTER_API_KEY is unset; large reads are not being delegated") so the
 model and user learn why nothing is delegated.
 
@@ -116,9 +120,13 @@ Allow when any of:
 Otherwise deny with reason:
 
 > File is N lines (threshold T). Delegate it: run
-> `${CLAUDE_PLUGIN_ROOT}/scripts/tender-read --question "<what you need>" --paths <path>`
+> `${CLAUDE_PLUGIN_ROOT}/scripts/tender-read --question "<what you need>" --paths '<path>'`
 > (skill `/tender:read`). If you need exact lines for an edit, re-read with
 > offset/limit for just that section.
+
+The path in the suggested command is single-quoted with embedded single
+quotes escaped, so a hostile filename cannot inject into the command Claude
+is told to run.
 
 ### 5.2 `check-bash-read` (matcher `Bash`)
 
@@ -157,7 +165,7 @@ tender-read --question "<q>" --paths <file> [<file> …] [--allow-ignored]
   bullets only; lead each bullet with the exact name, type or line number;
   nested bullets for detail; no preamble; skip what wasn't asked.
 - Prints the answer to stdout. Prints a one-line summary to stderr:
-  `[tender read: 3 files, ~41k in / 612 out, $0.0031, 9.4s, deepseek/deepseek-v4.1-flash]`.
+  `[tender read: 3 file(s), 41230 in (0 cached) / 612 out, $0.0031, 9s, google/gemini-3.1-flash-lite]`.
 
 ### 6.2 `tender-write`
 
@@ -170,8 +178,10 @@ tender-write --spec "<what>" --reference <file> [--target <path>] [--allow-ignor
 - System prompt: match the reference's patterns, naming and style exactly;
   output only code; no fences; make reasonable choices matching the reference
   when the spec is ambiguous.
-- Response has leading/trailing fences stripped. Empty result → exit 1,
-  target untouched.
+- Response has leading/trailing fences stripped into a temp file. If the
+  stripped result is empty or whitespace-only (for example a fence with
+  nothing inside) → exit 1, target untouched. Only a non-empty result is
+  moved onto the target.
 - With `--target`, writes the file and reports the line count to stderr.
   Without, prints to stdout. Same cost summary line.
 
@@ -197,12 +207,12 @@ refusal (`status: "refused"`).
    `.env`, `.env.*` except `.env.example`/`.env.sample`/`.env.template`,
    `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.keystore`, `*.jks`,
    `id_rsa*`, `id_ed25519*`, `id_ecdsa*`, `.netrc`, `.npmrc`, `.pypirc`,
-   `secrets*.{yml,yaml,json}`, `credentials*`, `*.tfvars`,
+   `secrets*.{yml,yaml,json}`, `credentials*`, `*.tfvars`, `.envrc`,
    any path containing `/.aws/`, `/.ssh/`, `/.gnupg/`, `/.kube/`.
    Extended by `TENDER_DENY_GLOBS`.
-2. **Gitignore check.** Inside a git work tree, `git check-ignore -q <path>`
-   matching refuses unless `--allow-ignored` was passed. Outside a repo this
-   layer is skipped.
+2. **Gitignore check.** Inside a git work tree, `git check-ignore -q` on the
+   given path or on its symlink-resolved target matching refuses unless
+   `--allow-ignored` was passed. Outside a repo this layer is skipped.
 3. **Content scan** (`grep -nE`, first hit wins):
    - `-----BEGIN [A-Z ]*PRIVATE KEY-----`
    - `AKIA[0-9A-Z]{16}` (AWS access key id)
@@ -210,8 +220,10 @@ refusal (`status: "refused"`).
    - `xox[baprs]-[A-Za-z0-9-]{10,}` (Slack tokens)
    - `sk-[A-Za-z0-9_-]{20,}` (common API key prefix)
    - `eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}` (JWT)
-   - `(password|passwd|secret|token|api[_-]?key)["']?\s*[:=]\s*["'][^"']{16,}["']`
-     (case-insensitive)
+   - `(password|passwd|secret|token|api[_-]?key)[A-Za-z0-9_-]*["']?\s*[:=]\s*["'][^"']{16,}["']`
+     (case-insensitive; the identifier tail catches `SECRET_KEY`,
+     `AWS_SECRET_ACCESS_KEY`, `STRIPE_SECRET_KEY`). Only quoted values are
+     matched; an unquoted `KEY=value` line is not.
 
 `TENDER_ALLOW_SECRETS=1` disables all three layers; the summary line then
 says so.
@@ -223,16 +235,19 @@ says so.
   `{model, messages:[{role:"system",…},{role:"user",…}], temperature:0.2,
   provider:{data_collection:"deny"}}`.
 - Refuse if body > `TENDER_MAX_PAYLOAD_BYTES`.
-- `curl -sS --max-time $TENDER_TIMEOUT -H "Authorization: Bearer …"
+- `curl -sS --max-time $TENDER_TIMEOUT -K <keyfile>
   -H "Content-Type: application/json" -H "HTTP-Referer: https://github.com/fabdrol/claude-plugins"
-  -H "X-Title: tender" --data-binary @body $TENDER_API_URL`.
+  -H "X-Title: tender" --data-binary @body $TENDER_API_URL`, where
+  `<keyfile>` is a mode-0600 temp file containing
+  `header = "Authorization: Bearer …"`, so the key never appears in any
+  process's argv.
 - Parse: non-JSON → transport error; `.error.message` present → surface it;
   `.choices[0].message.content` empty → error. Curl exit 28 → append hint to
   split the call.
 - Extract `.usage` (`prompt_tokens`, `prompt_tokens_details.cached_tokens`,
   `completion_tokens`, `cost`) and wall time; append log line; print summary.
-- The key is never echoed, logged, or passed on the command line of any
-  process other than curl.
+- The key is never echoed, logged, or passed on any command line; curl
+  reads it from the temp config file.
 
 ## 9. Cost log
 
