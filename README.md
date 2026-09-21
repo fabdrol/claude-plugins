@@ -26,4 +26,6 @@ The thinking behind these plugins is in
 [docs/agent-delegation-concept.md](docs/agent-delegation-concept.md).
 
 Licensed under Apache 2.0. `tender` is derived from Spotify's
-[shunt](https://github.com/spotify/portal-ai-plugins); see `NOTICE`.
+[shunt](https://github.com/spotify/portal-ai-plugins), specifically
+[the `add-shunt-claude` branch](https://github.com/sorantis/portal-ai-plugins/tree/add-shunt-claude/plugins/shunt);
+see `NOTICE`.
