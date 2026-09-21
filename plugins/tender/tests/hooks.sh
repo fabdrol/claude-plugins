@@ -16,8 +16,9 @@ gen "$FX/edge.ts" 350
 gen "$FX/big.ts" 900
 : > "$FX/empty.ts"
 
-# read_hook <json> → prints decision; sets OUTPUT
-read_hook() { OUTPUT=$(printf '%s' "$1" | "$HOOKS/check-file-size"); printf '%s' "$OUTPUT" | jq -r '.hookSpecificOutput.permissionDecision'; }
+# read_hook <json> → prints the decision; full output saved to $FX/last.json for `last`
+read_hook() { printf '%s' "$1" | "$HOOKS/check-file-size" > "$FX/last.json"; jq -r '.hookSpecificOutput.permissionDecision' "$FX/last.json"; }
+last() { jq -r "$1" "$FX/last.json"; }
 read_json() { jq -cn --arg p "$1" --arg s "${2:-s1}" '{session_id:$s, cwd:"/", tool_name:"Read", tool_input:{file_path:$p}}'; }
 
 echo "-- check-file-size"
@@ -27,13 +28,13 @@ assert_eq "empty file allowed" allow "$(read_hook "$(read_json "$FX/empty.ts")")
 assert_eq "missing file allowed" allow "$(read_hook "$(read_json "$FX/nope.ts")")"
 assert_eq "empty path allowed" allow "$(read_hook '{"tool_input":{}}')"
 assert_eq "big file denied" deny "$(read_hook "$(read_json "$FX/big.ts")")"
-reason=$(printf '%s' "$OUTPUT" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+reason=$(last '.hookSpecificOutput.permissionDecisionReason')
 assert_contains "deny reason has line count" "$reason" "900 lines"
 assert_contains "deny reason has threshold" "$reason" "threshold 350"
-assert_contains "deny reason has script path" "$reason" "$HOOKS/../scripts/tender-read"
+assert_contains "deny reason has script path" "$reason" "$(cd "$HOOKS/.." && pwd)/scripts/tender-read"
 assert_contains "deny reason has file path" "$reason" "$FX/big.ts"
 assert_contains "deny reason names skill" "$reason" "/tender:read"
-assert_eq "hookEventName set" PreToolUse "$(printf '%s' "$OUTPUT" | jq -r '.hookSpecificOutput.hookEventName')"
+assert_eq "hookEventName set" PreToolUse "$(last '.hookSpecificOutput.hookEventName')"
 
 assert_eq "offset makes it targeted" allow "$(read_hook "$(jq -cn --arg p "$FX/big.ts" '{tool_input:{file_path:$p, offset:10}}')")"
 assert_eq "limit makes it targeted" allow "$(read_hook "$(jq -cn --arg p "$FX/big.ts" '{tool_input:{file_path:$p, limit:50}}')")"
@@ -45,8 +46,8 @@ assert_eq "TENDER_DISABLED allows" allow "$(TENDER_DISABLED=1 read_hook "$(read_
 
 rm -f "$FX"/tender-unconfigured-*
 assert_eq "no key fails open" allow "$(OPENROUTER_API_KEY= read_hook "$(read_json "$FX/big.ts" s9)")"
-assert_contains "no key adds note first time" "$(printf '%s' "$OUTPUT" | jq -r '.hookSpecificOutput.additionalContext')" "OPENROUTER_API_KEY"
+assert_contains "no key adds note first time" "$(last '.hookSpecificOutput.additionalContext')" "OPENROUTER_API_KEY"
 OPENROUTER_API_KEY= read_hook "$(read_json "$FX/big.ts" s9)" >/dev/null
-assert_eq "no key note only once per session" "null" "$(printf '%s' "$OUTPUT" | jq -r '.hookSpecificOutput.additionalContext')"
+assert_eq "no key note only once per session" "null" "$(last '.hookSpecificOutput.additionalContext')"
 
 report
