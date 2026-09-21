@@ -96,4 +96,13 @@ assert_eq "bash hook TENDER_DISABLED allows" allow "$(TENDER_DISABLED=1 b "cat b
 rm -f "$FX"/tender-unconfigured-*
 assert_eq "bash hook no key fails open" allow "$(OPENROUTER_API_KEY= b "cat big.ts")"
 
+assert_eq "head -n without value allowed (no hang)" allow "$(b "head -n")"
+assert_eq "tail -n without value allowed (no hang)" allow "$(b "tail -n")"
+assert_eq "sed -n -e wide range denied" deny "$(b "sed -n -e '100,900p' big.ts")"
+assert_eq "sed -n -e small range allowed" allow "$(b "sed -n -e '10,60p' big.ts")"
+assert_eq "sed -ne wide range denied" deny "$(b "sed -ne '1,800p' big.ts")"
+assert_eq "cat with stderr to devnull denied" deny "$(b "cat big.ts 2>/dev/null")"
+assert_eq "cat with stderr merged denied" deny "$(b "cat big.ts 2>&1")"
+assert_eq "cat stdout redirected still allowed" allow "$(b "cat big.ts > copy.ts")"
+
 report

@@ -42,14 +42,18 @@ command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty')
 if [ -n "$cwd" ] && [ -d "$cwd" ]; then cd "$cwd" || allow; fi
 
+# stderr-only redirections do not keep output out of context
+stripped=$(printf '%s' "$command" | sed -E 's/2>[^[:space:]]*//g')
+
 # Pipes and redirects: targeted, or not read-into-context.
-case "$command" in *'|'*|*'>'*) allow ;; esac
+case "$stripped" in *'|'*|*'>'*) allow ;; esac
 
 # First segment of a compound command only.
-segment=$(printf '%s' "$command" | sed -E 's/[[:space:]]*(&&|;).*$//')
+segment=$(printf '%s' "$stripped" | sed -E 's/[[:space:]]*(&&|;).*$//')
 
 set -f
 # shellcheck disable=SC2086
+# Word split ignores shell quoting: a quoted path with spaces is not matched. Backstop, not a sandbox.
 set -- $segment
 set +f
 [ $# -eq 0 ] && allow
@@ -68,7 +72,7 @@ case "$cmd" in
     n_limit=10   # both default to ten lines
     while [ $# -gt 0 ]; do
       case "$1" in
-        -n)      n_limit="${2:-}"; shift 2 ;;
+        -n)      [ $# -ge 2 ] || allow; n_limit="$2"; shift 2 ;;
         -n*)     n_limit="${1#-n}"; shift ;;
         -c|-c*)  allow ;;                    # byte-limited
         -[0-9]*) n_limit="${1#-}"; shift ;;
@@ -83,9 +87,11 @@ case "$cmd" in
     if [ -n "$n_limit" ] && [ "$n_limit" -le "$MIN_LINES" ]; then allow; fi
     ;;
   sed)
-    [ "${1:-}" = "-n" ] || allow
-    range=$(printf '%s' "${2:-}" | tr -d "\"'")
-    file_path="${3:-}"
+    case "${1:-}" in -n|-ne) ;; *) allow ;; esac
+    shift
+    [ "${1:-}" = "-e" ] && shift
+    range=$(printf '%s' "${1:-}" | tr -d "\"'")
+    file_path="${2:-}"
     case "$range" in
       p) ;;                                  # whole file: fall through to line count
       *,\$p) ;;                              # A,$p: to end: fall through
