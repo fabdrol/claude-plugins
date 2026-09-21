@@ -319,4 +319,31 @@ assert_eq "empty completion leaves target untouched" "keep me" "$(cat "$target")
 
 run_write --spec "s" --reference "$G/.env";  assert_exit "guard on reference → 2" 2 $RC
 
+# ---------------------------------------------------------------- tender-usage
+echo "-- tender-usage"
+rm -f "$TENDER_LOG"
+out=$("$SCRIPTS/tender-usage"); rc=$?
+assert_exit "no log → 0" 0 $rc
+assert_contains "no log message" "$out" "No usage recorded"
+
+today=$(date -u +%Y-%m-%dT10:00:00Z)
+old="2000-01-03T10:00:00Z"
+mkdir -p "$(dirname "$TENDER_LOG")"
+cat > "$TENDER_LOG" <<EOF
+{"ts":"$today","repo":"alpha","mode":"read","model":"m/one","files":2,"prompt_tokens":100,"cached_tokens":0,"completion_tokens":10,"cost":0.01,"duration_ms":1000,"status":"ok"}
+{"ts":"$today","repo":"alpha","mode":"write","model":"m/two","files":1,"prompt_tokens":50,"cached_tokens":0,"completion_tokens":5,"cost":0.02,"duration_ms":1000,"status":"ok"}
+{"ts":"$today","repo":"beta","mode":"read","model":"m/one","files":1,"prompt_tokens":0,"cached_tokens":0,"completion_tokens":0,"cost":0,"duration_ms":0,"status":"error","error":"boom"}
+{"ts":"$today","repo":"beta","mode":"read","model":"","files":0,"prompt_tokens":0,"cached_tokens":0,"completion_tokens":0,"cost":0,"duration_ms":0,"status":"refused","reason":"x"}
+{"ts":"$old","repo":"alpha","mode":"read","model":"m/one","files":1,"prompt_tokens":9,"cached_tokens":0,"completion_tokens":9,"cost":9,"duration_ms":1,"status":"ok"}
+EOF
+out=$("$SCRIPTS/tender-usage")
+assert_contains "today header" "$out" "Today $(date -u +%Y-%m-%d)"
+assert_contains "today totals" "$out" "4 calls, 2 ok, 1 error, 1 refused, \$0.03"
+assert_contains "today by model" "$out" "m/one"
+assert_contains "today model cost" "$out" "m/two: 1 calls, \$0.02"
+assert_contains "today by repo" "$out" "alpha: 2 calls, \$0.03"
+assert_contains "week header" "$out" "Week $(date -u +%G-W%V)"
+assert_not_contains "old row excluded from week" "$out" "\$9.03"
+assert_not_contains "old row excluded from today" "$out" "\$9"
+
 report
