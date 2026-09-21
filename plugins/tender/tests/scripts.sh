@@ -234,4 +234,48 @@ rm -f "$TENDER_LOG"; guard 0 "$G/.env"
 assert_eq "refusal logged" "refused" "$(tail -1 "$TENDER_LOG" | jq -r .status)"
 assert_contains "refusal reason logged" "$(tail -1 "$TENDER_LOG" | jq -r .reason)" "denylist"
 
+# ---------------------------------------------------------------- tender-read
+echo "-- tender-read"
+FX="$TESTS/fixtures"
+export TENDER_READER_MODEL=stub/ok
+
+run_read() { OUT=$(cd "$TMP" && "$SCRIPTS/tender-read" "$@" 2>"$TMP/err.txt"); RC=$?; ERR=$(cat "$TMP/err.txt"); }
+
+run_read;                                   assert_exit "no args → 1" 1 $RC
+assert_contains "no args names --question" "$ERR" "--question"
+run_read --question "q";                    assert_exit "no paths → 1" 1 $RC
+assert_contains "no paths names --paths" "$ERR" "--paths"
+run_read --question "q" --paths "$TMP/missing.ts"; assert_exit "missing file → 1" 1 $RC
+assert_contains "missing file named" "$ERR" "missing.ts"
+run_read --question "q" --paths "$FX/user-service.ts" --bogus; assert_exit "unknown flag → 1" 1 $RC
+assert_contains "unknown flag named" "$ERR" "--bogus"
+
+rm -f "$TENDER_LOG"
+run_read --question "What does this do?" --paths "$FX/user-service.ts" "$G/ok.ts"
+assert_exit "happy path → 0" 0 $RC
+assert_contains "answer on stdout" "$OUT" "STUB ANSWER"
+assert_contains "summary on stderr" "$ERR" "[tender read: 2 file(s)"
+req=$(cat "$STUB_LAST_REQUEST")
+msg=$(printf '%s' "$req" | jq -r '.messages[1].content')
+assert_contains "files wrapped with path" "$msg" "<file path=\"$FX/user-service.ts\">"
+assert_contains "file contents included" "$msg" "class UserService"
+assert_contains "closing tag" "$msg" "</file>"
+assert_contains "question last" "$(printf '%s' "$msg" | tail -1)" "Question: What does this do?"
+assert_contains "system prompt is the analyst" "$(printf '%s' "$req" | jq -r '.messages[0].content')" "precise code analyst"
+assert_eq "reader model used" "stub/ok" "$(printf '%s' "$req" | jq -r .model)"
+assert_eq "logged as read" "read" "$(tail -1 "$TENDER_LOG" | jq -r .mode)"
+assert_eq "logged file count" "2" "$(tail -1 "$TENDER_LOG" | jq -r .files)"
+
+run_read --question "q" --paths "$G/.env";  assert_exit "guard refusal → 2" 2 $RC
+assert_contains "guard message shown" "$ERR" "denylist"
+run_read --question "q" --paths "$G/repo/build.log"; assert_exit "gitignored → 2" 2 $RC
+run_read --question "q" --paths "$G/repo/build.log" --allow-ignored; assert_exit "--allow-ignored → 0" 0 $RC
+
+OPENROUTER_API_KEY= run_read --question "q" --paths "$FX/user-service.ts"
+assert_exit "missing key → 1" 1 $RC
+assert_contains "missing key hint" "$ERR" "OPENROUTER_API_KEY"
+
+TENDER_READER_MODEL=stub/error run_read --question "q" --paths "$FX/user-service.ts"
+assert_exit "api error → 1" 1 $RC
+
 report

@@ -1,0 +1,76 @@
+#!/bin/bash
+# Delegate reading one or more files to a cheap model via OpenRouter.
+#
+# Usage: tender-read --question "<what you need to know>" --paths <file> [<file> ...] [--allow-ignored]
+#
+# Prints the model's bulleted answer to stdout and a cost summary to stderr.
+# Exit 0 ok, 1 error, 2 refused by the secrets guard.
+
+. "$(cd "$(dirname "$0")" && pwd)/lib/openrouter.sh"
+
+usage() {
+  echo 'Usage: tender-read --question "<question>" --paths <file> [<file> ...] [--allow-ignored]' >&2
+}
+
+question=""
+allow_ignored=0
+paths=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --question)
+      question="${2:-}"; shift 2 ;;
+    --paths)
+      shift
+      while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do paths+=("$1"); shift; done ;;
+    --allow-ignored)
+      allow_ignored=1; shift ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      echo "Error: unknown argument: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+if [ -z "$question" ]; then
+  echo "Error: --question is required" >&2; usage; exit 1
+fi
+if [ ${#paths[@]} -eq 0 ]; then
+  echo "Error: --paths is required" >&2; usage; exit 1
+fi
+
+# A typo'd path would become an empty <file> block and a confident answer
+# about nothing. Fail before any network call.
+for p in "${paths[@]}"; do
+  if [ ! -f "$p" ] || [ ! -r "$p" ]; then
+    echo "Error: file not found or unreadable: $p" >&2
+    exit 1
+  fi
+done
+
+tender_preflight || exit 1
+tender_guard read "$allow_ignored" "${paths[@]}" || exit $?
+
+tender_tmpfile system_file || exit 1
+tender_tmpfile message_file || exit 1
+
+cat > "$system_file" <<'EOF'
+You are a precise code analyst. Read the provided files and answer the question concisely.
+Output structured bullets only. No greetings, no prose, no preambles.
+Lead every bullet with the exact name, type, or line number it refers to.
+Use nested bullets for details. Skip anything the caller did not ask for.
+EOF
+
+# Stream files straight into the message: no corpus-sized shell variable,
+# contents survive byte-for-byte.
+for p in "${paths[@]}"; do
+  {
+    printf '<file path="%s">\n' "$p"
+    cat "$p"
+    printf '\n</file>\n\n'
+  } >> "$message_file"
+done
+printf 'Question: %s\n' "$question" >> "$message_file"
+
+tender_invoke read "$TENDER_READER_MODEL" "$system_file" "$message_file" "${#paths[@]}" || exit 1
+echo "$TENDER_LAST_SUMMARY" >&2
