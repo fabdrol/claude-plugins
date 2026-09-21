@@ -243,6 +243,8 @@ run_read() { OUT=$(cd "$TMP" && "$SCRIPTS/tender-read" "$@" 2>"$TMP/err.txt"); R
 
 run_read;                                   assert_exit "no args → 1" 1 $RC
 assert_contains "no args names --question" "$ERR" "--question"
+run_read --question;                        assert_exit "--question without value → 1" 1 $RC
+assert_contains "--question without value explains" "$ERR" "needs a value"
 run_read --question "q";                    assert_exit "no paths → 1" 1 $RC
 assert_contains "no paths names --paths" "$ERR" "--paths"
 run_read --question "q" --paths "$TMP/missing.ts"; assert_exit "missing file → 1" 1 $RC
