@@ -96,3 +96,94 @@ tender_log() {
   fi
   return 0
 }
+
+# ---------------------------------------------------------------- transport
+
+# tender_strip_fences: stdin → stdout, dropping a first line that starts with
+# ``` and a last line that is only ```. Inner fences are kept.
+tender_strip_fences() {
+  awk 'NR == 1 && /^```/ { next }
+       { buf[++n] = $0 }
+       END {
+         if (n > 0 && buf[n] ~ /^```[[:space:]]*$/) n--
+         for (i = 1; i <= n; i++) print buf[i]
+       }'
+}
+
+TENDER_LAST_SUMMARY=""
+TENDER_GUARD_BYPASSED=""
+
+# tender_invoke <mode> <model> <system_file> <message_file> <files_count>
+# Prints the completion. Returns 1 on any failure (message on stderr, logged).
+tender_invoke() {
+  local mode="$1" model="$2" system_file="$3" message_file="$4" nfiles="$5"
+  local body resp bytes rc err content pt ct out cost dur secs
+
+  tender_tmpfile body || return 1
+  tender_tmpfile resp || return 1
+
+  jq -n --arg model "$model" --rawfile sys "$system_file" --rawfile msg "$message_file" \
+    '{model: $model,
+      messages: [{role: "system", content: $sys}, {role: "user", content: $msg}],
+      temperature: 0.2,
+      provider: {data_collection: "deny"}}' > "$body" || return 1
+
+  bytes=$(wc -c < "$body" | tr -d ' ')
+  if [ "$bytes" -gt "$TENDER_MAX_PAYLOAD_BYTES" ]; then
+    echo "Error: request is $bytes bytes, over TENDER_MAX_PAYLOAD_BYTES ($TENDER_MAX_PAYLOAD_BYTES)." >&2
+    echo "  Send fewer or smaller files, or raise TENDER_MAX_PAYLOAD_BYTES if the model's context allows." >&2
+    tender_log "$mode" "$model" "$nfiles" 0 0 0 0 0 error "payload too large ($bytes bytes)"
+    return 1
+  fi
+
+  SECONDS=0
+  curl -sS --max-time "$TENDER_TIMEOUT" \
+    -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+    -H "Content-Type: application/json" \
+    -H "HTTP-Referer: https://github.com/fabdrol/claude-plugins" \
+    -H "X-Title: tender" \
+    --data-binary "@$body" -o "$resp" "$TENDER_API_URL" 2>/dev/null
+  rc=$?
+  secs=$SECONDS
+  dur=$((secs * 1000))
+
+  if [ "$rc" -ne 0 ]; then
+    echo "Error: request to $TENDER_API_URL failed (curl exit $rc)." >&2
+    if [ "$rc" -eq 28 ]; then
+      echo "  Timed out after ${TENDER_TIMEOUT}s. Split the work into smaller calls or raise TENDER_TIMEOUT." >&2
+    fi
+    tender_log "$mode" "$model" "$nfiles" 0 0 0 0 "$dur" error "curl exit $rc"
+    return 1
+  fi
+
+  if ! jq -e . "$resp" >/dev/null 2>&1; then
+    echo "Error: unparseable response from $TENDER_API_URL:" >&2
+    head -c 400 "$resp" >&2; echo >&2
+    tender_log "$mode" "$model" "$nfiles" 0 0 0 0 "$dur" error "unparseable response"
+    return 1
+  fi
+
+  err=$(jq -r '.error.message // empty' "$resp")
+  if [ -n "$err" ]; then
+    echo "Error: OpenRouter: $err" >&2
+    tender_log "$mode" "$model" "$nfiles" 0 0 0 0 "$dur" error "$err"
+    return 1
+  fi
+
+  content=$(jq -r '.choices[0].message.content // empty' "$resp")
+  if [ -z "$content" ]; then
+    echo "Error: empty completion from $model." >&2
+    tender_log "$mode" "$model" "$nfiles" 0 0 0 0 "$dur" error "empty completion"
+    return 1
+  fi
+
+  pt=$(jq -r '.usage.prompt_tokens // 0' "$resp")
+  ct=$(jq -r '.usage.prompt_tokens_details.cached_tokens // 0' "$resp")
+  out=$(jq -r '.usage.completion_tokens // 0' "$resp")
+  cost=$(jq -r '.usage.cost // 0' "$resp")
+  tender_log "$mode" "$model" "$nfiles" "$pt" "$ct" "$out" "$cost" "$dur" ok
+
+  TENDER_LAST_SUMMARY="[tender $mode: $nfiles file(s), ${pt} in (${ct} cached) / ${out} out, \$${cost}, ${secs}s, $model${TENDER_GUARD_BYPASSED:+, secrets guard OFF}]"
+  printf '%s\n' "$content"
+  return 0
+}
