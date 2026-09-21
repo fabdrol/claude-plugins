@@ -1,0 +1,7 @@
+claude-plugins
+Copyright 2026 Fabian Droll
+
+The "tender" plugin is derived from "shunt" by Spotify AB
+(https://github.com/spotify/portal-ai-plugins, Apache License 2.0).
+The Portal/AiKA transport was replaced with a direct OpenRouter client;
+hooks, script interfaces and skill wording were adapted.

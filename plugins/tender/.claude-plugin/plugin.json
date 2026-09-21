@@ -1,0 +1,14 @@
+{
+  "name": "tender",
+  "displayName": "Tender",
+  "version": "0.1.0",
+  "description": "Shunts I/O-heavy work to a cheap model via OpenRouter. Hooks block large file reads and redirect to tender-read/tender-write scripts, with a secrets guard and a per-call cost log.",
+  "author": {
+    "name": "Fabian Droll"
+  },
+  "repository": "https://github.com/fabdrol/claude-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["token-optimization", "model-routing", "delegation", "openrouter"],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}

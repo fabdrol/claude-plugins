@@ -1,0 +1,4 @@
+.DS_Store
+plugins/tender/tests/.fixtures/
+plugins/tender/tests/.tmp/
+.superpowers/
