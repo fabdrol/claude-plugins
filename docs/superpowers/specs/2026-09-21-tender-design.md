@@ -78,7 +78,7 @@ claude plugin install tender@fabdrol
 |---|---|---|
 | `OPENROUTER_API_KEY` | — | Required for any call. Absent → hooks fail open. |
 | `TENDER_MIN_LINES` | `350` | Files at or below this pass the hooks untouched. |
-| `TENDER_READER_MODEL` | `deepseek/deepseek-v4.1-flash` | Model for `read`. |
+| `TENDER_READER_MODEL` | `google/gemini-3.1-flash-lite` | Model for `read`. |
 | `TENDER_WRITER_MODEL` | `deepseek/deepseek-v4.1-flash` | Model for `write`. |
 | `TENDER_MAX_PAYLOAD_BYTES` | `2000000` | Refuse larger request bodies. |
 | `TENDER_TIMEOUT` | `180` | `curl --max-time` seconds. |
