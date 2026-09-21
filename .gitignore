@@ -5,3 +5,4 @@
 !.env.example
 plugins/tender/tests/.fixtures/
 plugins/tender/tests/.tmp/
+__pycache__/
