@@ -111,6 +111,7 @@ tender_strip_fences() {
 }
 
 TENDER_LAST_SUMMARY=""
+TENDER_LAST_USAGE=""
 TENDER_GUARD_BYPASSED=""
 
 # tender_invoke <mode> <model> <system_file> <message_file> <files_count>
@@ -119,6 +120,7 @@ tender_invoke() {
   local mode="$1" model="$2" system_file="$3" message_file="$4" nfiles="$5"
   local body resp bytes rc err content pt ct out cost dur secs curl_err curl_msg log_detail
 
+  TENDER_LAST_USAGE=""
   tender_tmpfile body || return 1
   tender_tmpfile resp || return 1
   tender_tmpfile curl_err || return 1
@@ -188,6 +190,7 @@ tender_invoke() {
   ct=$(jq -r '.usage.prompt_tokens_details.cached_tokens // 0' "$resp")
   out=$(jq -r '.usage.completion_tokens // 0' "$resp")
   cost=$(jq -r '(.usage.cost // 0) | tostring' "$resp")
+  TENDER_LAST_USAGE=$(jq -c '.usage // empty' "$resp")
   case "$cost" in
     ''|*[!0-9.eE+-]*) cost=0 ;;
   esac

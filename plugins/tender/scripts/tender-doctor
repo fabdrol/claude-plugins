@@ -31,8 +31,10 @@ tender_tmpfile sys || exit 1
 tender_tmpfile msg || exit 1
 printf 'You are a connectivity check. Reply with the single word OK.' > "$sys"
 printf 'ping' > "$msg"
-if tender_invoke doctor "$TENDER_READER_MODEL" "$sys" "$msg" 0 >/dev/null; then
-  ok "OpenRouter call succeeded $TENDER_LAST_SUMMARY"
-else
+if ! tender_invoke doctor "$TENDER_READER_MODEL" "$sys" "$msg" 0 >/dev/null; then
   fail "OpenRouter call failed" "See the error above. Check the key, the model name and network access."
 fi
+if [ -z "$TENDER_LAST_USAGE" ]; then
+  fail "OpenRouter call returned no usage block" "Cost logging needs usage data; check the model/provider or report this."
+fi
+ok "OpenRouter call succeeded $TENDER_LAST_SUMMARY"

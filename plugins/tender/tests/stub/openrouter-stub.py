@@ -9,6 +9,7 @@ Behaviour is chosen by the requested model's suffix:
   stub/garbage  non-JSON body
   stub/slow     sleeps 5 s before answering
   stub/badcost  ok response with a non-numeric usage.cost ("n/a")
+  stub/nousage  ok response without a usage block
 Every request body is written to $STUB_LAST_REQUEST for assertions.
 Usage: openrouter-stub.py [port]   (default 48123)
 """
@@ -60,13 +61,16 @@ class Handler(BaseHTTPRequestHandler):
             "fenced": "```ts\nexport const generated = 1;\n```",
             "empty": "",
             "badcost": "- STUB ANSWER\n  - model: %s" % model,
+            "nousage": "- STUB ANSWER\n  - model: %s" % model,
         }.get(mode, "- STUB ANSWER")
-        self._json(200, {
+        resp = {
             "id": "stub",
             "model": model,
             "choices": [{"message": {"role": "assistant", "content": content}}],
-            "usage": usage,
-        })
+        }
+        if mode != "nousage":
+            resp["usage"] = usage
+        self._json(200, resp)
 
     def _json(self, code, obj):
         self._send(code, json.dumps(obj).encode())

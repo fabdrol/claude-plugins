@@ -372,4 +372,8 @@ out=$(TENDER_READER_MODEL=stub/error "$SCRIPTS/tender-doctor" 2>&1); rc=$?
 assert_exit "doctor api failure → 1" 1 $rc
 assert_contains "doctor shows api error" "$out" "stub failure"
 
+out=$(TENDER_READER_MODEL=stub/nousage "$SCRIPTS/tender-doctor" 2>&1); rc=$?
+assert_exit "doctor without usage block → 1" 1 $rc
+assert_contains "doctor names missing usage" "$out" "no usage block"
+
 report
