@@ -1,0 +1,124 @@
+#!/bin/bash
+# Hook decision tests. Offline. Generates fixture files of given line counts.
+TESTS="$(cd "$(dirname "$0")" && pwd)"
+HOOKS="$(cd "$TESTS/../hooks" && pwd)"
+. "$TESTS/lib.sh"
+
+FX="$TESTS/.fixtures"
+rm -rf "$FX"; mkdir -p "$FX"
+export TMPDIR="$FX"
+export OPENROUTER_API_KEY="test-key"
+unset TENDER_MIN_LINES TENDER_DISABLED
+
+gen() { seq 1 "$2" | awk '{print "line " NR}' > "$1"; }
+gen "$FX/small.ts" 100
+gen "$FX/edge.ts" 350
+gen "$FX/big.ts" 900
+gen "$FX/we'ird.ts" 900
+: > "$FX/empty.ts"
+
+# An allowed call produces NO output: the hook expresses no opinion. Empty
+# output therefore reads as "allow" here, and `last` reports "null" for it.
+decision() { if [ -s "$FX/last.json" ]; then jq -r '.hookSpecificOutput.permissionDecision // "allow"' "$FX/last.json"; else echo allow; fi; }
+last() { if [ -s "$FX/last.json" ]; then jq -r "$1" "$FX/last.json"; else echo null; fi; }
+
+# read_hook <json> → prints the decision; full output saved to $FX/last.json for `last`
+read_hook() { printf '%s' "$1" | "$HOOKS/check-file-size" > "$FX/last.json"; decision; }
+read_json() { jq -cn --arg p "$1" --arg s "${2:-s1}" '{session_id:$s, cwd:"/", tool_name:"Read", tool_input:{file_path:$p}}'; }
+
+echo "-- check-file-size"
+assert_eq "small file allowed" allow "$(read_hook "$(read_json "$FX/small.ts")")"
+assert_eq "allow prints nothing" "" "$(cat "$FX/last.json")"
+assert_eq "file at threshold allowed" allow "$(read_hook "$(read_json "$FX/edge.ts")")"
+assert_eq "empty file allowed" allow "$(read_hook "$(read_json "$FX/empty.ts")")"
+assert_eq "missing file allowed" allow "$(read_hook "$(read_json "$FX/nope.ts")")"
+assert_eq "empty path allowed" allow "$(read_hook '{"tool_input":{}}')"
+assert_eq "big file denied" deny "$(read_hook "$(read_json "$FX/big.ts")")"
+reason=$(last '.hookSpecificOutput.permissionDecisionReason')
+assert_contains "deny reason has line count" "$reason" "900 lines"
+assert_contains "deny reason has threshold" "$reason" "threshold 350"
+assert_contains "deny reason has script path" "$reason" "$(cd "$HOOKS/.." && pwd)/scripts/tender-read"
+assert_contains "deny reason has file path" "$reason" "$FX/big.ts"
+assert_contains "deny reason names skill" "$reason" "/tender:read"
+assert_eq "apostrophe path denied" deny "$(read_hook "$(read_json "$FX/we'ird.ts")")"
+assert_contains "deny reason shell-quotes the path" "$(last '.hookSpecificOutput.permissionDecisionReason')" "--paths '$FX/we'\\''ird.ts'"
+
+assert_eq "hookEventName set" PreToolUse "$(last '.hookSpecificOutput.hookEventName')"
+
+assert_eq "offset makes it targeted" allow "$(read_hook "$(jq -cn --arg p "$FX/big.ts" '{tool_input:{file_path:$p, offset:10}}')")"
+assert_eq "limit makes it targeted" allow "$(read_hook "$(jq -cn --arg p "$FX/big.ts" '{tool_input:{file_path:$p, limit:50}}')")"
+
+assert_eq "custom threshold denies" deny "$(TENDER_MIN_LINES=50 read_hook "$(read_json "$FX/small.ts")")"
+assert_eq "custom threshold allows" allow "$(TENDER_MIN_LINES=1000 read_hook "$(read_json "$FX/big.ts")")"
+assert_eq "bad threshold falls back" deny "$(TENDER_MIN_LINES=abc read_hook "$(read_json "$FX/big.ts")")"
+assert_eq "TENDER_DISABLED allows" allow "$(TENDER_DISABLED=1 read_hook "$(read_json "$FX/big.ts")")"
+
+rm -f "$FX"/tender-unconfigured-*
+assert_eq "no key fails open" allow "$(OPENROUTER_API_KEY= read_hook "$(read_json "$FX/big.ts" s9)")"
+assert_contains "no key adds note first time" "$(last '.hookSpecificOutput.additionalContext')" "OPENROUTER_API_KEY"
+assert_eq "note has no decision" "null" "$(last '.hookSpecificOutput.permissionDecision')"
+OPENROUTER_API_KEY= read_hook "$(read_json "$FX/big.ts" s9)" >/dev/null
+assert_eq "no key note only once per session" "null" "$(last '.hookSpecificOutput.additionalContext')"
+
+echo "-- check-bash-read"
+bash_hook() { printf '%s' "$1" | "$HOOKS/check-bash-read" > "$FX/last.json"; decision; }
+bash_json() { jq -cn --arg c "$1" --arg cwd "$FX" '{session_id:"s1", cwd:$cwd, tool_name:"Bash", tool_input:{command:$c}}'; }
+b() { bash_hook "$(bash_json "$1")"; }
+
+assert_eq "cat small allowed" allow "$(b "cat small.ts")"
+assert_eq "bash allow prints nothing" "" "$(cat "$FX/last.json")"
+assert_eq "cat big denied (relative to cwd)" deny "$(b "cat big.ts")"
+assert_eq "cat big absolute denied" deny "$(b "cat $FX/big.ts")"
+assert_eq "cat -n big denied" deny "$(b "cat -n big.ts")"
+assert_eq "cat quoted big denied" deny "$(b "cat \"$FX/big.ts\"")"
+assert_eq "cat missing allowed" allow "$(b "cat nope.ts")"
+assert_eq "piped allowed" allow "$(b "cat big.ts | grep foo")"
+assert_eq "redirected allowed" allow "$(b "cat big.ts > copy.ts")"
+assert_eq "unrelated command allowed" allow "$(b "ls -la")"
+assert_eq "empty command allowed" allow "$(bash_hook '{"tool_input":{}}')"
+assert_eq "compound first segment denied" deny "$(b "cat big.ts && echo done")"
+assert_eq "compound first segment allowed" allow "$(b "echo start; cat big.ts")"
+
+assert_eq "head default (10 lines) allowed" allow "$(b "head big.ts")"
+assert_eq "head -n 50 allowed" allow "$(b "head -n 50 big.ts")"
+assert_eq "head -50 allowed" allow "$(b "head -50 big.ts")"
+assert_eq "head -n 500 denied" deny "$(b "head -n 500 big.ts")"
+assert_eq "head -n 500 small allowed" allow "$(b "head -n 500 small.ts")"
+assert_eq "tail -n 20 allowed" allow "$(b "tail -n 20 big.ts")"
+assert_eq "tail -n +5 denied (from line 5 to end)" deny "$(b "tail -n +5 big.ts")"
+assert_eq "tail -c 100 allowed" allow "$(b "tail -c 100 big.ts")"
+assert_eq "less big denied" deny "$(b "less big.ts")"
+assert_eq "more small allowed" allow "$(b "more small.ts")"
+
+assert_eq "sed -n small range allowed" allow "$(b "sed -n '10,60p' big.ts")"
+assert_eq "sed -n range at threshold allowed" allow "$(b "sed -n '1,350p' big.ts")"
+assert_eq "sed -n wide range denied" deny "$(b "sed -n '1,800p' big.ts")"
+assert_eq "sed -n to end denied" deny "$(b "sed -n '100,\$p' big.ts")"
+assert_eq "sed -n single line allowed" allow "$(b "sed -n 42p big.ts")"
+assert_eq "sed -n p whole file denied" deny "$(b "sed -n p big.ts")"
+assert_eq "sed substitute allowed" allow "$(b "sed -i 's/a/b/' big.ts")"
+
+b "cat big.ts" >/dev/null
+reason=$(last '.hookSpecificOutput.permissionDecisionReason')
+assert_contains "bash deny reason has script path" "$reason" "scripts/tender-read"
+assert_contains "bash deny reason has line count" "$reason" "900 lines"
+
+assert_eq "bash hook TENDER_DISABLED allows" allow "$(TENDER_DISABLED=1 b "cat big.ts")"
+rm -f "$FX"/tender-unconfigured-*
+assert_eq "bash hook no key fails open" allow "$(OPENROUTER_API_KEY= b "cat big.ts")"
+assert_contains "bash no key adds note" "$(last '.hookSpecificOutput.additionalContext')" "OPENROUTER_API_KEY"
+assert_eq "bash note has no decision" "null" "$(last '.hookSpecificOutput.permissionDecision')"
+
+assert_eq "head -n without value allowed (no hang)" allow "$(b "head -n")"
+assert_eq "tail -n without value allowed (no hang)" allow "$(b "tail -n")"
+assert_eq "sed -n -e wide range denied" deny "$(b "sed -n -e '100,900p' big.ts")"
+assert_eq "sed -n -e small range allowed" allow "$(b "sed -n -e '10,60p' big.ts")"
+assert_eq "sed -ne wide range denied" deny "$(b "sed -ne '1,800p' big.ts")"
+assert_eq "cat with stderr to devnull denied" deny "$(b "cat big.ts 2>/dev/null")"
+assert_eq "cat with stderr merged denied" deny "$(b "cat big.ts 2>&1")"
+assert_eq "cat stdout redirected still allowed" allow "$(b "cat big.ts > copy.ts")"
+assert_eq "cat < big denied" deny "$(b "cat < big.ts")"
+assert_eq "cat <big (no space) denied" deny "$(b "cat <big.ts")"
+assert_eq "cat < small allowed" allow "$(b "cat < small.ts")"
+
+report

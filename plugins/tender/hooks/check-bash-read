@@ -1,0 +1,93 @@
+#!/bin/bash
+# PreToolUse hook (matcher: Bash). Catches cat/head/tail/less/more/sed -n on
+# large files that would bypass the Read hook. Piped and redirected commands
+# pass (targeted, or not read-into-context). Only the first segment of a
+# compound command is inspected: a backstop, not a sandbox.
+
+input=$(cat)
+
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=common.sh
+. "$(dirname "$0")/common.sh"
+tender_hook_preamble
+
+command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
+[ -z "$command" ] && allow
+
+cwd=$(printf '%s' "$input" | jq -r '.cwd // empty')
+if [ -n "$cwd" ] && [ -d "$cwd" ]; then cd "$cwd" || allow; fi
+
+# stderr-only redirections do not keep output out of context
+stripped=$(printf '%s' "$command" | sed -E 's/2>[^[:space:]]*//g')
+
+# Pipes and redirects: targeted, or not read-into-context.
+case "$stripped" in *'|'*|*'>'*) allow ;; esac
+
+# First segment of a compound command only.
+segment=$(printf '%s' "$stripped" | sed -E 's/[[:space:]]*(&&|;).*$//')
+
+set -f
+# shellcheck disable=SC2086
+# Word split ignores shell quoting: a quoted path with spaces is not matched. Backstop, not a sandbox.
+set -- $segment
+set +f
+[ $# -eq 0 ] && allow
+cmd="$1"; shift
+
+file_path=""
+n_limit=""
+
+case "$cmd" in
+  cat|less|more)
+    while [ $# -gt 0 ]; do
+      # `cat < file` reads the file into context exactly like `cat file`.
+      case "$1" in -*|'<') shift ;; *) file_path="$1"; break ;; esac
+    done
+    ;;
+  head|tail)
+    n_limit=10   # both default to ten lines
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -n)      [ $# -ge 2 ] || allow; n_limit="$2"; shift 2 ;;
+        -n*)     n_limit="${1#-n}"; shift ;;
+        -c|-c*)  allow ;;                    # byte-limited
+        -[0-9]*) n_limit="${1#-}"; shift ;;
+        -*|'<')  shift ;;
+        *)       file_path="$1"; break ;;
+      esac
+    done
+    case "$n_limit" in
+      +*) n_limit="" ;;                      # tail -n +N: from N to end, no limit
+      ''|*[!0-9]*) n_limit="" ;;
+    esac
+    if [ -n "$n_limit" ] && [ "$n_limit" -le "$MIN_LINES" ]; then allow; fi
+    ;;
+  sed)
+    case "${1:-}" in -n|-ne) ;; *) allow ;; esac
+    shift
+    [ "${1:-}" = "-e" ] && shift
+    range=$(printf '%s' "${1:-}" | tr -d "\"'")
+    file_path="${2:-}"
+    case "$range" in
+      p) ;;                                  # whole file: fall through to line count
+      *,\$p) ;;                              # A,$p: to end: fall through
+      *,*p)
+        a=${range%%,*}; b=${range#*,}; b=${b%p}
+        case "$a$b" in *[!0-9]*) allow ;; esac
+        [ $((b - a + 1)) -le "$MIN_LINES" ] && allow ;;
+      *) allow ;;                            # single line or anything we can't judge
+    esac
+    ;;
+  *) allow ;;
+esac
+
+file_path=$(printf '%s' "$file_path" | tr -d "\"'")
+file_path="${file_path#<}"          # `cat <file` with no space
+[ -z "$file_path" ] && allow
+[ -f "$file_path" ] || allow
+
+lines=$(wc -l < "$file_path" 2>/dev/null | tr -d ' ')
+case "$lines" in ''|*[!0-9]*) lines=0 ;; esac
+[ "$lines" -le "$MIN_LINES" ] && allow
+
+deny "File is $lines lines (threshold $MIN_LINES). Delegate it instead of reading it with $cmd: run \`$PLUGIN_ROOT/scripts/tender-read --question \"<what you need to know>\" --paths $(shell_quote "$file_path")\` (skill /tender:read). If you need exact lines for an edit, use sed -n with a range of at most $MIN_LINES lines."
