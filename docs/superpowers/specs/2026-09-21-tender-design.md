@@ -125,9 +125,10 @@ Otherwise deny with reason:
 Same allow rules, plus:
 
 - allow if the command contains `|` or `>` (piped or redirected, not
-  read-into-context);
+  read-into-context), after stripping stderr-only redirections such as
+  `2>/dev/null` and `2>&1`, which do not keep output out of context;
 - only inspect commands starting with `cat`, `head`, `tail`, `less`, `more`,
-  or `sed -n`;
+  or `sed -n` (also `sed -ne` and `sed -n -e`);
 - first non-flag argument is the path; for `sed -n 'A,Bp' file` the path is
   the argument after the range;
 - `head`/`tail` with an explicit `-n N` or `-N` where N ≤ threshold → allow;
@@ -137,7 +138,8 @@ Same allow rules, plus:
 Deny reason mirrors 5.1.
 
 Compound commands (`&&`, `;`) are inspected on the first segment only, as in
-shunt. Good enough; the hooks are a backstop, not a sandbox.
+shunt, and the word split ignores shell quoting, so a quoted path containing
+spaces is not matched. Good enough; the hooks are a backstop, not a sandbox.
 
 ## 6. Scripts
 
