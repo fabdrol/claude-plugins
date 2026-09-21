@@ -39,7 +39,7 @@ invoke() {
 echo "-- lib: config"
 out=$(TENDER_API_URL= bash -c ". '$SCRIPTS/lib/openrouter.sh'; echo \$TENDER_MIN_LINES \$TENDER_TIMEOUT \$TENDER_MAX_PAYLOAD_BYTES; echo \$TENDER_READER_MODEL; echo \$TENDER_API_URL")
 assert_eq "numeric defaults" "350 180 2000000" "$(echo "$out" | sed -n 1p)"
-assert_eq "reader model default" "deepseek/deepseek-v4.1-flash" "$(echo "$out" | sed -n 2p)"
+assert_eq "reader model default" "google/gemini-3.1-flash-lite" "$(echo "$out" | sed -n 2p)"
 assert_eq "api url default" "https://openrouter.ai/api/v1/chat/completions" "$(echo "$out" | sed -n 3p)"
 
 out=$(TENDER_MIN_LINES=abc TENDER_TIMEOUT=12 bash -c ". '$SCRIPTS/lib/openrouter.sh'; echo \$TENDER_MIN_LINES \$TENDER_TIMEOUT")

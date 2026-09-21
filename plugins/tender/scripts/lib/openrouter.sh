@@ -18,7 +18,7 @@ tender_num() {
 TENDER_MIN_LINES=$(tender_num "${TENDER_MIN_LINES:-}" 350)
 TENDER_MAX_PAYLOAD_BYTES=$(tender_num "${TENDER_MAX_PAYLOAD_BYTES:-}" 2000000)
 TENDER_TIMEOUT=$(tender_num "${TENDER_TIMEOUT:-}" 180)
-TENDER_READER_MODEL="${TENDER_READER_MODEL:-deepseek/deepseek-v4.1-flash}"
+TENDER_READER_MODEL="${TENDER_READER_MODEL:-google/gemini-3.1-flash-lite}"
 TENDER_WRITER_MODEL="${TENDER_WRITER_MODEL:-deepseek/deepseek-v4.1-flash}"
 TENDER_API_URL="${TENDER_API_URL:-https://openrouter.ai/api/v1/chat/completions}"
 TENDER_LOG="${TENDER_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/tender/usage.jsonl}"

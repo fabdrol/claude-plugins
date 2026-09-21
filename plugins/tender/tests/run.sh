@@ -16,7 +16,12 @@ if [ "${1:-}" = "--benchmark" ] && [ -f "$TESTS/benchmark.sh" ]; then
 fi
 if command -v shellcheck >/dev/null 2>&1; then
   echo "== shellcheck"
-  shellcheck -s bash "$TESTS"/../hooks/check-* "$TESTS"/../scripts/tender-* "$TESTS"/../scripts/lib/*.sh "$TESTS"/*.sh && echo "  ok"
+  files=""
+  for f in "$TESTS"/../hooks/check-* "$TESTS"/../scripts/tender-* "$TESTS"/../scripts/lib/*.sh "$TESTS"/*.sh; do
+    [ -f "$f" ] && files="$files $f"
+  done
+  # shellcheck disable=SC2086
+  shellcheck -s bash $files && echo "  ok"
 else
   echo "== shellcheck skipped (not installed; brew install shellcheck)"
 fi
