@@ -302,3 +302,8 @@ re-send paths for follow-ups, and verify line numbers before editing.
    `OPENROUTER_API_KEY`.
 4. Sub-project two (worker service, plugin `crew` or similar) joins the same
    marketplace.
+
+Verified 2026-09-21: doctor ok with google/gemini-3.1-flash-lite, $0.000005; Read
+hook denied a 900-line whole-file read in a live `claude -p` session, and Claude
+recovered with a targeted offset/limit re-read of just the last lines instead of
+delegating to tender-read.

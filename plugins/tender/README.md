@@ -26,7 +26,8 @@ boilerplate, for a fraction of the cost.
 claude plugin marketplace add fabdrol/claude-plugins
 claude plugin install tender@fabdrol
 export OPENROUTER_API_KEY=...        # https://openrouter.ai/keys, in your shell profile
-~/.claude/plugins/marketplaces/fabdrol/plugins/tender/scripts/tender-doctor
+~/.claude/plugins/cache/fabdrol/tender/0.1.0/scripts/tender-doctor
+# find the exact path with: claude plugin details tender@fabdrol (or ls ~/.claude/plugins/cache/fabdrol/tender/)
 ```
 
 Requires `jq` and `curl`. Without the key the plugin is inert: hooks allow
