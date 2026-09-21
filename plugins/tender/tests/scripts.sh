@@ -222,6 +222,14 @@ guard 0 "$G/repo/src.ts";      assert_exit "tracked file passes" 0 $RC
 TENDER_ALLOW_SECRETS=1 guard 0 "$G/.env" "$G/aws.ts"
 assert_exit "TENDER_ALLOW_SECRETS bypasses everything" 0 $RC
 
+ln -sf "$G/.env" "$G/link_to_env"
+ln -sf "$G/sub/.aws/credentials" "$G/link_to_aws"
+ln -sf "$G/ok.ts" "$G/link_to_ok"
+guard 0 "$G/link_to_env";     assert_exit "symlink to .env refused" 2 $RC
+assert_contains "symlink refusal names target" "$ERR" "-> $G/.env"
+guard 0 "$G/link_to_aws";     assert_exit "symlink into .aws refused" 2 $RC
+guard 0 "$G/link_to_ok";      assert_exit "symlink to plain file passes" 0 $RC
+
 rm -f "$TENDER_LOG"; guard 0 "$G/.env"
 assert_eq "refusal logged" "refused" "$(tail -1 "$TENDER_LOG" | jq -r .status)"
 assert_contains "refusal reason logged" "$(tail -1 "$TENDER_LOG" | jq -r .reason)" "denylist"

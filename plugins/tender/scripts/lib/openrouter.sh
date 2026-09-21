@@ -217,6 +217,20 @@ tender_abspath() {
   (cd "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")")
 }
 
+# tender_resolve <path>: follows symlinks (max 20 hops) and prints the absolute target.
+tender_resolve() {
+  local p="$1" i=0 target
+  while [ -L "$p" ] && [ "$i" -lt 20 ]; do
+    target=$(readlink "$p") || break
+    case "$target" in
+      /*) p="$target" ;;
+      *)  p="$(dirname "$p")/$target" ;;
+    esac
+    i=$((i + 1))
+  done
+  tender_abspath "$p"
+}
+
 # tender_guard_name <path>: 0 if the name or a directory segment is denied.
 tender_guard_name() {
   local lower pat old_ifs
@@ -262,7 +276,7 @@ tender_guard_content() {
 
 # tender_guard <mode> <allow_ignored 0|1> <path>...: 0 ok, 2 refused.
 tender_guard() {
-  local mode="$1" allow_ignored="$2" p reason line
+  local mode="$1" allow_ignored="$2" p reason line resolved
   shift 2
   if [ "${TENDER_ALLOW_SECRETS:-}" = "1" ]; then
     TENDER_GUARD_BYPASSED=1
@@ -270,8 +284,11 @@ tender_guard() {
   fi
   for p in "$@"; do
     reason=""
+    resolved=$(tender_resolve "$p")
     if tender_guard_name "$p"; then
       reason="refused: $p matches the secrets filename denylist"
+    elif [ "$resolved" != "$p" ] && tender_guard_name "$resolved"; then
+      reason="refused: $p -> $resolved matches the secrets filename denylist"
     elif [ "$allow_ignored" != "1" ] && tender_guard_ignored "$p"; then
       reason="refused: $p is gitignored (pass --allow-ignored to send it anyway)"
     elif line=$(tender_guard_content "$p"); then
