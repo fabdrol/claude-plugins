@@ -23,16 +23,13 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   curl -s -o /dev/null "http://127.0.0.1:$STUB_PORT/" && break
   sleep 0.25
 done
-STUB_API_URL="http://127.0.0.1:$STUB_PORT/api/v1/chat/completions"
+export TENDER_API_URL="http://127.0.0.1:$STUB_PORT/api/v1/chat/completions"
 
 # invoke <mode> <model> <system text> <message text> [files]; echoes stdout, sets RC/ERR/SUMMARY
-# TENDER_API_URL defaults to the stub, scoped to this call only, so it doesn't
-# leak into other sections (e.g. lib: config's "api url default" assertion).
-# Callers may still override it (see the "connection refused" case below).
 invoke() {
   local sysf="$TMP/sys.txt" msgf="$TMP/msg.txt" errf="$TMP/err.txt"
   printf '%s' "$3" > "$sysf"; printf '%s' "$4" > "$msgf"
-  OUT=$(cd "$TMP" && TENDER_API_URL="${TENDER_API_URL:-$STUB_API_URL}" bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_invoke '$1' '$2' '$sysf' '$msgf' '${5:-1}'; rc=\$?; echo \"SUMMARY=\$TENDER_LAST_SUMMARY\" >&2; exit \$rc" 2>"$errf")
+  OUT=$(cd "$TMP" && bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_invoke '$1' '$2' '$sysf' '$msgf' '${5:-1}'; rc=\$?; echo \"SUMMARY=\$TENDER_LAST_SUMMARY\" >&2; exit \$rc" 2>"$errf")
   RC=$?
   ERR=$(cat "$errf")
   SUMMARY=$(grep '^SUMMARY=' "$errf" | sed 's/^SUMMARY=//')
@@ -40,7 +37,7 @@ invoke() {
 
 # ---------------------------------------------------------------- lib: config
 echo "-- lib: config"
-out=$(bash -c ". '$SCRIPTS/lib/openrouter.sh'; echo \$TENDER_MIN_LINES \$TENDER_TIMEOUT \$TENDER_MAX_PAYLOAD_BYTES; echo \$TENDER_READER_MODEL; echo \$TENDER_API_URL")
+out=$(TENDER_API_URL= bash -c ". '$SCRIPTS/lib/openrouter.sh'; echo \$TENDER_MIN_LINES \$TENDER_TIMEOUT \$TENDER_MAX_PAYLOAD_BYTES; echo \$TENDER_READER_MODEL; echo \$TENDER_API_URL")
 assert_eq "numeric defaults" "350 180 2000000" "$(echo "$out" | sed -n 1p)"
 assert_eq "reader model default" "deepseek/deepseek-v4.1-flash" "$(echo "$out" | sed -n 2p)"
 assert_eq "api url default" "https://openrouter.ai/api/v1/chat/completions" "$(echo "$out" | sed -n 3p)"
