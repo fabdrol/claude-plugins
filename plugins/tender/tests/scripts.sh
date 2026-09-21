@@ -43,6 +43,8 @@ path=$(bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_tmpfile f; echo \$f; [ -f
 f=$(echo "$path" | sed -n 1p)
 assert_eq "tmpfile exists during script" "exists" "$(echo "$path" | sed -n 2p)"
 [ -e "$f" ] && fail "tmpfile removed on exit" "$f still exists" || pass "tmpfile removed on exit"
+path=$(bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_tmpfile tmp_file; [ -n \"\$tmp_file\" ] && [ -f \"\$tmp_file\" ] && echo set")
+assert_eq "tmpfile works for varname tmp_file" "set" "$path"
 
 # ---------------------------------------------------------------- lib: log
 echo "-- lib: log"

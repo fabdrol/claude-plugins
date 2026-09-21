@@ -28,12 +28,12 @@ TENDER_LOG="${TENDER_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/tender/usage.jso
 TENDER_TMPFILES=""
 # tender_tmpfile <varname>: mktemp, remember for cleanup, store path in varname.
 tender_tmpfile() {
-  local tmp_file
-  tmp_file=$(mktemp) || return 1
-  TENDER_TMPFILES="$TENDER_TMPFILES $tmp_file"
+  local __tender_tmpfile_path
+  __tender_tmpfile_path=$(mktemp) || return 1
+  TENDER_TMPFILES="$TENDER_TMPFILES $__tender_tmpfile_path"
   # shellcheck disable=SC2064
   trap "rm -f $TENDER_TMPFILES" EXIT
-  printf -v "$1" '%s' "$tmp_file"
+  printf -v "$1" '%s' "$__tender_tmpfile_path"
 }
 
 # ---------------------------------------------------------------- preflight
