@@ -161,4 +161,68 @@ inner
 \`\`\`
 b" "$out"
 
+# ---------------------------------------------------------------- lib: guard
+echo "-- lib: guard"
+G="$TMP/guard"; rm -rf "$G"; mkdir -p "$G/sub/.aws" "$G/repo"
+printf 'SAFE=1\n' > "$G/.env"
+printf 'SAFE=1\n' > "$G/.env.local"
+printf 'EXAMPLE=\n' > "$G/.env.example"
+printf 'x\n' > "$G/server.PEM"
+printf 'x\n' > "$G/secrets-prod.yml"
+printf 'x\n' > "$G/sub/.aws/credentials"
+printf 'x\n' > "$G/custom.secretfile"
+printf 'plain code\n' > "$G/ok.ts"
+printf 'const id = "AKIAIOSFODNN7EXAMPLE";\n' > "$G/aws.ts"
+printf -- '-----BEGIN RSA PRIVATE KEY-----\nabc\n' > "$G/key.txt"
+printf 'x\nconst token = "ghp_%s";\n' "$(printf 'a%.0s' $(seq 1 40))" > "$G/gh.ts"
+printf 'x\ny\npassword: "supersecretvalue123456"\n' > "$G/cfg.yml"
+printf 'const risk = "risk-assessment-configuration-value";\n' > "$G/risk.ts"
+printf 'class: "desk-lamp-extra-long-class-name"\n' > "$G/desk.yml"
+printf 'x\n' > "$G/repo/build.log"; printf 'src\n' > "$G/repo/src.ts"
+(cd "$G/repo" && git init -q && printf 'build.log\n' > .gitignore)
+
+# guard <allow_ignored> <paths...>; sets RC, ERR
+guard() {
+  local allow="$1"; shift
+  ERR=$(cd "$TMP" && bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_guard read $allow \"\$@\"" _ "$@" 2>&1 >/dev/null); RC=$?
+}
+
+guard 0 "$G/ok.ts";            assert_exit "plain file passes" 0 $RC
+guard 0 "$G/.env";             assert_exit ".env refused" 2 $RC
+assert_contains ".env names denylist" "$ERR" "denylist"
+assert_contains ".env names the file" "$ERR" "$G/.env"
+assert_not_contains ".env does not print contents" "$ERR" "SAFE=1"
+guard 0 "$G/.env.local";       assert_exit ".env.local refused" 2 $RC
+guard 0 "$G/.env.example";     assert_exit ".env.example allowed" 0 $RC
+guard 0 "$G/server.PEM";       assert_exit "*.pem refused case-insensitively" 2 $RC
+guard 0 "$G/secrets-prod.yml"; assert_exit "secrets*.yml refused" 2 $RC
+guard 0 "$G/sub/.aws/credentials"; assert_exit "path under .aws refused" 2 $RC
+guard 0 "$G/custom.secretfile"; assert_exit "custom name passes without TENDER_DENY_GLOBS" 0 $RC
+TENDER_DENY_GLOBS='*.secretfile:*.other' guard 0 "$G/custom.secretfile"
+assert_exit "TENDER_DENY_GLOBS extends denylist" 2 $RC
+guard 0 "$G/ok.ts" "$G/.env";  assert_exit "one bad path refuses the whole call" 2 $RC
+
+guard 0 "$G/aws.ts";           assert_exit "AWS key id refused" 2 $RC
+assert_contains "content hit names file and line" "$ERR" "$G/aws.ts:1"
+assert_not_contains "content hit hides value" "$ERR" "AKIAIOSFODNN7EXAMPLE"
+guard 0 "$G/key.txt";          assert_exit "private key header refused" 2 $RC
+guard 0 "$G/gh.ts";            assert_exit "github token refused" 2 $RC
+assert_contains "github token line number" "$ERR" "$G/gh.ts:2"
+guard 0 "$G/cfg.yml";          assert_exit "password assignment refused" 2 $RC
+assert_contains "password assignment line number" "$ERR" "$G/cfg.yml:3"
+guard 0 "$G/risk.ts";          assert_exit "risk-… is not an sk- key" 0 $RC
+guard 0 "$G/desk.yml";         assert_exit "desk-… is not an sk- key" 0 $RC
+
+guard 0 "$G/repo/build.log";   assert_exit "gitignored refused" 2 $RC
+assert_contains "gitignored hint" "$ERR" "--allow-ignored"
+guard 1 "$G/repo/build.log";   assert_exit "gitignored allowed with flag" 0 $RC
+guard 0 "$G/repo/src.ts";      assert_exit "tracked file passes" 0 $RC
+
+TENDER_ALLOW_SECRETS=1 guard 0 "$G/.env" "$G/aws.ts"
+assert_exit "TENDER_ALLOW_SECRETS bypasses everything" 0 $RC
+
+rm -f "$TENDER_LOG"; guard 0 "$G/.env"
+assert_eq "refusal logged" "refused" "$(tail -1 "$TENDER_LOG" | jq -r .status)"
+assert_contains "refusal reason logged" "$(tail -1 "$TENDER_LOG" | jq -r .reason)" "denylist"
+
 report

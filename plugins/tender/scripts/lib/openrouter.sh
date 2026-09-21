@@ -201,3 +201,87 @@ tender_invoke() {
   printf '%s\n' "$content"
   return 0
 }
+
+# ---------------------------------------------------------------- secrets guard
+#
+# Everything tender sends leaves the machine. Three layers, each a hard refusal:
+# filename denylist, gitignore, content scan. TENDER_ALLOW_SECRETS=1 (env only)
+# disables all three.
+
+TENDER_DENY_NAMES='.env:.env.*:*.pem:*.key:*.p12:*.pfx:*.keystore:*.jks:id_rsa*:id_ed25519*:id_ecdsa*:.netrc:.npmrc:.pypirc:secrets*.yml:secrets*.yaml:secrets*.json:credentials*:*.tfvars'
+
+TENDER_SECRET_RE='-----BEGIN [A-Z ]*PRIVATE KEY-----|(^|[^A-Za-z0-9])AKIA[0-9A-Z]{16}|(^|[^A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36,}|(^|[^A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}|(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+TENDER_ASSIGN_RE="(password|passwd|secret|token|api[_-]?key)[\"']?[[:space:]]*[:=][[:space:]]*[\"'][^\"']{16,}[\"']"
+
+tender_abspath() {
+  (cd "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")")
+}
+
+# tender_guard_name <path>: 0 if the name or a directory segment is denied.
+tender_guard_name() {
+  local lower pat old_ifs
+  lower=$(basename "$1" | tr '[:upper:]' '[:lower:]')
+  case "$lower" in
+    .env.example|.env.sample|.env.template) return 1 ;;
+  esac
+  old_ifs=$IFS
+  IFS=':'
+  set -f
+  for pat in $TENDER_DENY_NAMES ${TENDER_DENY_GLOBS:-}; do
+    # shellcheck disable=SC2254
+    case "$lower" in $pat) set +f; IFS=$old_ifs; return 0 ;; esac
+  done
+  set +f
+  IFS=$old_ifs
+  case "/$(tender_abspath "$1")/" in
+    */.aws/*|*/.ssh/*|*/.gnupg/*|*/.kube/*) return 0 ;;
+  esac
+  return 1
+}
+
+# tender_guard_ignored <path>: 0 if inside a git work tree and gitignored.
+tender_guard_ignored() {
+  local dir
+  dir=$(dirname "$1")
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  git -C "$dir" check-ignore -q "$(basename "$1")" 2>/dev/null
+}
+
+# tender_guard_content <path>: prints the first matching line number, 0 on hit.
+tender_guard_content() {
+  local line
+  line=$(grep -nE "$TENDER_SECRET_RE" "$1" 2>/dev/null | head -1 | cut -d: -f1)
+  if [ -z "$line" ]; then
+    line=$(grep -niE "$TENDER_ASSIGN_RE" "$1" 2>/dev/null | head -1 | cut -d: -f1)
+  fi
+  [ -n "$line" ] || return 1
+  printf '%s' "$line"
+  return 0
+}
+
+# tender_guard <mode> <allow_ignored 0|1> <path>...: 0 ok, 2 refused.
+tender_guard() {
+  local mode="$1" allow_ignored="$2" p reason line
+  shift 2
+  if [ "${TENDER_ALLOW_SECRETS:-}" = "1" ]; then
+    TENDER_GUARD_BYPASSED=1
+    return 0
+  fi
+  for p in "$@"; do
+    reason=""
+    if tender_guard_name "$p"; then
+      reason="refused: $p matches the secrets filename denylist"
+    elif [ "$allow_ignored" != "1" ] && tender_guard_ignored "$p"; then
+      reason="refused: $p is gitignored (pass --allow-ignored to send it anyway)"
+    elif line=$(tender_guard_content "$p"); then
+      reason="refused: $p:$line looks like it contains a secret"
+    fi
+    if [ -n "$reason" ]; then
+      echo "Error: $reason. Nothing was sent." >&2
+      echo "  Set TENDER_ALLOW_SECRETS=1 in the environment to override deliberately." >&2
+      tender_log "$mode" "" 0 0 0 0 0 0 refused "$reason"
+      return 2
+    fi
+  done
+  return 0
+}
