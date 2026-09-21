@@ -245,6 +245,8 @@ One JSON object per line at `TENDER_LOG`, directory created on demand:
 
 `status` is `ok`, `error` (with `error` string) or `refused` (with `reason`).
 `repo` is the basename of `git rev-parse --show-toplevel`, else of `cwd`.
+`duration_ms` has whole-second granularity (bash `SECONDS`), since portable
+millisecond timing would need perl or python, which are not runtime deps.
 No file contents, questions, specs or answers are logged.
 
 ## 10. Skills
