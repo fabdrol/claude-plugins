@@ -1,0 +1,80 @@
+#!/bin/bash
+# Delegate pattern-following code generation to a cheap model via OpenRouter.
+#
+# Usage: tender-write --spec "<what to generate>" --reference <file> [--target <path>] [--allow-ignored]
+#
+# Writes the generated code to --target (or stdout) and a cost summary to
+# stderr. Exit 0 ok, 1 error, 2 refused by the secrets guard.
+
+. "$(cd "$(dirname "$0")" && pwd)/lib/openrouter.sh"
+
+usage() {
+  echo 'Usage: tender-write --spec "<what>" --reference <file> [--target <path>] [--allow-ignored]' >&2
+}
+
+spec=""
+reference=""
+target=""
+allow_ignored=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --spec|--reference|--target)
+      # bash's `shift 2` refuses to shift when only one argument is left,
+      # which would loop forever; reject a trailing flag without a value.
+      if [ $# -lt 2 ]; then echo "Error: $1 needs a value" >&2; usage; exit 1; fi
+      case "$1" in
+        --spec)      spec="$2" ;;
+        --reference) reference="$2" ;;
+        --target)    target="$2" ;;
+      esac
+      shift 2 ;;
+    --allow-ignored) allow_ignored=1; shift ;;
+    -h|--help)       usage; exit 0 ;;
+    *) echo "Error: unknown argument: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+if [ -z "$spec" ]; then
+  echo "Error: --spec is required" >&2; usage; exit 1
+fi
+# Without a reference the model generates context-free code that fits nothing.
+if [ -z "$reference" ]; then
+  echo "Error: --reference is required: pass a file whose patterns the output should match." >&2
+  echo "  For a follow-up, reference the file the previous call just generated." >&2
+  exit 1
+fi
+if [ ! -f "$reference" ] || [ ! -r "$reference" ]; then
+  echo "Error: reference file not found or unreadable: $reference" >&2
+  exit 1
+fi
+
+tender_preflight || exit 1
+tender_guard write "$allow_ignored" "$reference" || exit $?
+
+tender_tmpfile system_file || exit 1
+tender_tmpfile message_file || exit 1
+tender_tmpfile answer_file || exit 1
+
+cat > "$system_file" <<'EOF'
+You generate code files based on a spec and a reference file.
+Match the reference's patterns, conventions, naming, and style exactly.
+Output only the code. No explanations, no markdown fences.
+If the spec is ambiguous, make reasonable choices that match the reference code's patterns.
+EOF
+
+{
+  printf 'Spec: %s\n\nReference:\n' "$spec"
+  cat "$reference"
+} > "$message_file"
+
+tender_invoke write "$TENDER_WRITER_MODEL" "$system_file" "$message_file" 1 > "$answer_file" || exit 1
+
+if [ -n "$target" ]; then
+  mkdir -p "$(dirname "$target")" || exit 1
+  tender_strip_fences < "$answer_file" > "$target" || exit 1
+  echo "Wrote $(wc -l < "$target" | tr -d ' ') lines to $target" >&2
+else
+  tender_strip_fences < "$answer_file"
+fi
+echo "$TENDER_LAST_SUMMARY" >&2

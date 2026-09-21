@@ -280,4 +280,43 @@ assert_contains "missing key hint" "$ERR" "OPENROUTER_API_KEY"
 TENDER_READER_MODEL=stub/error run_read --question "q" --paths "$FX/user-service.ts"
 assert_exit "api error → 1" 1 $RC
 
+# ---------------------------------------------------------------- tender-write
+echo "-- tender-write"
+export TENDER_WRITER_MODEL=stub/fenced
+run_write() { OUT=$(cd "$TMP" && "$SCRIPTS/tender-write" "$@" 2>"$TMP/err.txt"); RC=$?; ERR=$(cat "$TMP/err.txt"); }
+
+run_write;                                  assert_exit "no args → 1" 1 $RC
+run_write --spec;                           assert_exit "--spec without value → 1" 1 $RC
+assert_contains "--spec without value explains" "$ERR" "needs a value"
+run_write --spec "tests";                   assert_exit "no reference → 1" 1 $RC
+assert_contains "no reference explains why" "$ERR" "--reference"
+run_write --spec "tests" --reference "$TMP/nope.ts"; assert_exit "missing reference → 1" 1 $RC
+
+rm -f "$TENDER_LOG"
+run_write --spec "Write tests for UserService" --reference "$FX/user-service.ts"
+assert_exit "stdout mode → 0" 0 $RC
+assert_eq "fences stripped on stdout" "export const generated = 1;" "$OUT"
+assert_contains "summary on stderr" "$ERR" "[tender write: 1 file(s)"
+req=$(cat "$STUB_LAST_REQUEST")
+msg=$(printf '%s' "$req" | jq -r '.messages[1].content')
+assert_contains "spec first" "$(printf '%s' "$msg" | head -1)" "Spec: Write tests for UserService"
+assert_contains "reference included" "$msg" "class UserService"
+assert_contains "system prompt is the writer" "$(printf '%s' "$req" | jq -r '.messages[0].content')" "Output only the code"
+assert_eq "writer model used" "stub/fenced" "$(printf '%s' "$req" | jq -r .model)"
+assert_eq "logged as write" "write" "$(tail -1 "$TENDER_LOG" | jq -r .mode)"
+
+target="$TMP/out/generated.test.ts"
+run_write --spec "s" --reference "$FX/user-service.ts" --target "$target"
+assert_exit "target mode → 0" 0 $RC
+assert_eq "target written without fences" "export const generated = 1;" "$(cat "$target")"
+assert_eq "nothing on stdout in target mode" "" "$OUT"
+assert_contains "reports lines written" "$ERR" "Wrote 1 lines to $target"
+
+printf 'keep me\n' > "$target"
+TENDER_WRITER_MODEL=stub/empty run_write --spec "s" --reference "$FX/user-service.ts" --target "$target"
+assert_exit "empty completion → 1" 1 $RC
+assert_eq "empty completion leaves target untouched" "keep me" "$(cat "$target")"
+
+run_write --spec "s" --reference "$G/.env";  assert_exit "guard on reference → 2" 2 $RC
+
 report
