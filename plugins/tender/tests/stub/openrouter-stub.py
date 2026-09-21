@@ -5,12 +5,16 @@ Behaviour is chosen by the requested model's suffix:
   stub/ok       bullets that include the model name
   stub/fenced   a ```ts fenced snippet (tests fence stripping)
   stub/empty    empty content
+  stub/fenceonly a fence with nothing inside (strips to nothing)
+  stub/blank    whitespace-only content
   stub/error    OpenRouter-style error envelope, HTTP 400
   stub/garbage  non-JSON body
   stub/slow     sleeps 5 s before answering
+  stub/slowok   sleeps 2 s, then answers ok (long enough to inspect curl's argv)
   stub/badcost  ok response with a non-numeric usage.cost ("n/a")
   stub/nousage  ok response without a usage block
-Every request body is written to $STUB_LAST_REQUEST for assertions.
+Every request body is written to $STUB_LAST_REQUEST and the request's
+Authorization header to $STUB_LAST_AUTH, for assertions.
 Usage: openrouter-stub.py [port]   (default 48123)
 """
 import json
@@ -20,6 +24,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LAST = os.environ.get("STUB_LAST_REQUEST", "/tmp/tender-stub-last-request.json")
+LAST_AUTH = os.environ.get("STUB_LAST_AUTH", "/tmp/tender-stub-last-auth.txt")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -34,6 +39,8 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         with open(LAST, "wb") as fh:
             fh.write(raw)
+        with open(LAST_AUTH, "w") as fh:
+            fh.write(self.headers.get("Authorization") or "")
         try:
             body = json.loads(raw)
         except Exception:
@@ -50,6 +57,8 @@ class Handler(BaseHTTPRequestHandler):
         }
         if mode == "slow":
             time.sleep(5)
+        if mode == "slowok":
+            time.sleep(2)
         if mode == "garbage":
             return self._send(200, b"<html>not json</html>")
         if mode == "error":
@@ -60,6 +69,8 @@ class Handler(BaseHTTPRequestHandler):
             "ok": "- STUB ANSWER\n  - model: %s" % model,
             "fenced": "```ts\nexport const generated = 1;\n```",
             "empty": "",
+            "fenceonly": "```ts\n```",
+            "blank": "   \n",
             "badcost": "- STUB ANSWER\n  - model: %s" % model,
             "nousage": "- STUB ANSWER\n  - model: %s" % model,
         }.get(mode, "- STUB ANSWER")

@@ -70,11 +70,25 @@ EOF
 
 tender_invoke write "$TENDER_WRITER_MODEL" "$system_file" "$message_file" 1 > "$answer_file" || exit 1
 
+# Strip into a temp file first. A model that answers with an empty fence would
+# otherwise truncate the target to nothing.
+tender_tmpfile stripped_file || exit 1
+tender_strip_fences < "$answer_file" > "$stripped_file" || exit 1
+
+if ! grep -q '[^[:space:]]' "$stripped_file"; then
+  if [ -n "$target" ]; then
+    echo "Error: empty completion after stripping fences; $target untouched." >&2
+  else
+    echo "Error: empty completion after stripping fences; nothing written." >&2
+  fi
+  exit 1
+fi
+
 if [ -n "$target" ]; then
   mkdir -p "$(dirname "$target")" || exit 1
-  tender_strip_fences < "$answer_file" > "$target" || exit 1
+  cat "$stripped_file" > "$target" || exit 1
   echo "Wrote $(wc -l < "$target" | tr -d ' ') lines to $target" >&2
 else
-  tender_strip_fences < "$answer_file"
+  cat "$stripped_file"
 fi
 echo "$TENDER_LAST_SUMMARY" >&2

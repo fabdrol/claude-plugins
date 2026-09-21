@@ -4,37 +4,12 @@
 # pass (targeted, or not read-into-context). Only the first segment of a
 # compound command is inspected: a backstop, not a sandbox.
 
-allow() {
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}\n'
-  exit 0
-}
-
-command -v jq >/dev/null 2>&1 || allow
-
-allow_note() {
-  jq -cn --arg c "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",additionalContext:$c}}'
-  exit 0
-}
-deny() {
-  jq -cn --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 0
-}
-
-PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MIN_LINES="${TENDER_MIN_LINES:-350}"
-case "$MIN_LINES" in ''|*[!0-9]*) MIN_LINES=350 ;; esac
-
 input=$(cat)
 
-[ "${TENDER_DISABLED:-}" = "1" ] && allow
-
-if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-  session=$(printf '%s' "$input" | jq -r '.session_id // "nosession"')
-  marker="${TMPDIR:-/tmp}/tender-unconfigured-$session"
-  if [ -e "$marker" ]; then allow; fi
-  touch "$marker" 2>/dev/null
-  allow_note "tender is installed but OPENROUTER_API_KEY is unset, so large reads are not being delegated. Export the key (https://openrouter.ai/keys) and restart Claude Code to enable it."
-fi
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=common.sh
+. "$(dirname "$0")/common.sh"
+tender_hook_preamble
 
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -z "$command" ] && allow
@@ -65,7 +40,8 @@ n_limit=""
 case "$cmd" in
   cat|less|more)
     while [ $# -gt 0 ]; do
-      case "$1" in -*) shift ;; *) file_path="$1"; break ;; esac
+      # `cat < file` reads the file into context exactly like `cat file`.
+      case "$1" in -*|'<') shift ;; *) file_path="$1"; break ;; esac
     done
     ;;
   head|tail)
@@ -76,7 +52,7 @@ case "$cmd" in
         -n*)     n_limit="${1#-n}"; shift ;;
         -c|-c*)  allow ;;                    # byte-limited
         -[0-9]*) n_limit="${1#-}"; shift ;;
-        -*)      shift ;;
+        -*|'<')  shift ;;
         *)       file_path="$1"; break ;;
       esac
     done
@@ -106,6 +82,7 @@ case "$cmd" in
 esac
 
 file_path=$(printf '%s' "$file_path" | tr -d "\"'")
+file_path="${file_path#<}"          # `cat <file` with no space
 [ -z "$file_path" ] && allow
 [ -f "$file_path" ] || allow
 
@@ -113,4 +90,4 @@ lines=$(wc -l < "$file_path" 2>/dev/null | tr -d ' ')
 case "$lines" in ''|*[!0-9]*) lines=0 ;; esac
 [ "$lines" -le "$MIN_LINES" ] && allow
 
-deny "File is $lines lines (threshold $MIN_LINES). Delegate it instead of reading it with $cmd: run \`$PLUGIN_ROOT/scripts/tender-read --question \"<what you need to know>\" --paths $file_path\` (skill /tender:read). If you need exact lines for an edit, use sed -n with a range of at most $MIN_LINES lines."
+deny "File is $lines lines (threshold $MIN_LINES). Delegate it instead of reading it with $cmd: run \`$PLUGIN_ROOT/scripts/tender-read --question \"<what you need to know>\" --paths $(shell_quote "$file_path")\` (skill /tender:read). If you need exact lines for an edit, use sed -n with a range of at most $MIN_LINES lines."

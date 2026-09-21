@@ -25,14 +25,14 @@ TENDER_LOG="${TENDER_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/tender/usage.jso
 
 # ---------------------------------------------------------------- temp files
 
-TENDER_TMPFILES=""
+TENDER_TMPFILES=()
 # tender_tmpfile <varname>: mktemp, remember for cleanup, store path in varname.
+# An array, so a temp path containing spaces is still removed.
 tender_tmpfile() {
   local __tender_tmpfile_path
   __tender_tmpfile_path=$(mktemp) || return 1
-  TENDER_TMPFILES="$TENDER_TMPFILES $__tender_tmpfile_path"
-  # shellcheck disable=SC2064
-  trap "rm -f $TENDER_TMPFILES" EXIT
+  TENDER_TMPFILES+=("$__tender_tmpfile_path")
+  trap 'rm -f "${TENDER_TMPFILES[@]}"' EXIT
   printf -v "$1" '%s' "$__tender_tmpfile_path"
 }
 
@@ -118,12 +118,13 @@ TENDER_GUARD_BYPASSED=""
 # Prints the completion. Returns 1 on any failure (message on stderr, logged).
 tender_invoke() {
   local mode="$1" model="$2" system_file="$3" message_file="$4" nfiles="$5"
-  local body resp bytes rc err content pt ct out cost dur secs curl_err curl_msg log_detail
+  local body resp bytes rc err content pt ct out cost dur secs curl_err curl_msg log_detail keyfile
 
   TENDER_LAST_USAGE=""
   tender_tmpfile body || return 1
   tender_tmpfile resp || return 1
   tender_tmpfile curl_err || return 1
+  tender_tmpfile keyfile || return 1
 
   jq -n --arg model "$model" --rawfile sys "$system_file" --rawfile msg "$message_file" \
     '{model: $model,
@@ -139,9 +140,14 @@ tender_invoke() {
     return 1
   fi
 
+  # The key goes to curl through a 0600 config file, never on a command line:
+  # argv is world-readable through ps.
+  chmod 600 "$keyfile"
+  printf 'header = "Authorization: Bearer %s"\n' "$OPENROUTER_API_KEY" > "$keyfile" || return 1
+
   SECONDS=0
   curl -sS --max-time "$TENDER_TIMEOUT" \
-    -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+    -K "$keyfile" \
     -H "Content-Type: application/json" \
     -H "HTTP-Referer: https://github.com/fabdrol/claude-plugins" \
     -H "X-Title: tender" \
@@ -211,10 +217,13 @@ tender_invoke() {
 # filename denylist, gitignore, content scan. TENDER_ALLOW_SECRETS=1 (env only)
 # disables all three.
 
-TENDER_DENY_NAMES='.env:.env.*:*.pem:*.key:*.p12:*.pfx:*.keystore:*.jks:id_rsa*:id_ed25519*:id_ecdsa*:.netrc:.npmrc:.pypirc:secrets*.yml:secrets*.yaml:secrets*.json:credentials*:*.tfvars'
+TENDER_DENY_NAMES='.env:.env.*:.envrc:*.pem:*.key:*.p12:*.pfx:*.keystore:*.jks:id_rsa*:id_ed25519*:id_ecdsa*:.netrc:.npmrc:.pypirc:secrets*.yml:secrets*.yaml:secrets*.json:credentials*:*.tfvars'
 
 TENDER_SECRET_RE='-----BEGIN [A-Z ]*PRIVATE KEY-----|(^|[^A-Za-z0-9])AKIA[0-9A-Z]{16}|(^|[^A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36,}|(^|[^A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}|(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
-TENDER_ASSIGN_RE="(password|passwd|secret|token|api[_-]?key)[\"']?[[:space:]]*[:=][[:space:]]*[\"'][^\"']{16,}[\"']"
+# The [A-Za-z0-9_-]* tail after the keyword catches SECRET_KEY,
+# AWS_SECRET_ACCESS_KEY and STRIPE_SECRET_KEY. Only quoted values match; an
+# unquoted KEY=value line is a documented miss.
+TENDER_ASSIGN_RE="(password|passwd|secret|token|api[_-]?key)[A-Za-z0-9_-]*[\"']?[[:space:]]*[:=][[:space:]]*[\"'][^\"']{16,}[\"']"
 
 tender_abspath() {
   (cd "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")")
@@ -294,6 +303,8 @@ tender_guard() {
       reason="refused: $p -> $resolved matches the secrets filename denylist"
     elif [ "$allow_ignored" != "1" ] && tender_guard_ignored "$p"; then
       reason="refused: $p is gitignored (pass --allow-ignored to send it anyway)"
+    elif [ "$allow_ignored" != "1" ] && [ "$resolved" != "$p" ] && tender_guard_ignored "$resolved"; then
+      reason="refused: $p -> $resolved is gitignored (pass --allow-ignored to send it anyway)"
     elif line=$(tender_guard_content "$p"); then
       reason="refused: $p:$line looks like it contains a secret"
     fi

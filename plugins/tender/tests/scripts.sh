@@ -16,6 +16,7 @@ unset TENDER_MIN_LINES TENDER_MAX_PAYLOAD_BYTES TENDER_TIMEOUT TENDER_READER_MOD
 # ---------------------------------------------------------------- stub server
 STUB_PORT="${STUB_PORT:-48123}"
 export STUB_LAST_REQUEST="$TMP/last-request.json"
+export STUB_LAST_AUTH="$TMP/last-auth.txt"
 python3 "$TESTS/stub/openrouter-stub.py" "$STUB_PORT" &
 STUB_PID=$!
 trap 'kill $STUB_PID 2>/dev/null' EXIT
@@ -67,6 +68,19 @@ assert_eq "tmpfile exists during script" "exists" "$(echo "$path" | sed -n 2p)"
 [ -e "$f" ] && fail "tmpfile removed on exit" "$f still exists" || pass "tmpfile removed on exit"
 path=$(bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_tmpfile tmp_file; [ -n \"\$tmp_file\" ] && [ -f \"\$tmp_file\" ] && echo set")
 assert_eq "tmpfile works for varname tmp_file" "set" "$path"
+# Cleanup must survive a temp path containing spaces (BSD mktemp ignores
+# TMPDIR, so shim it).
+SPACED="$TMP/with space"; mkdir -p "$SPACED" "$TMP/fakebin"
+cat > "$TMP/fakebin/mktemp" <<EOS
+#!/bin/bash
+f="$SPACED/tmp.\$\$.\$RANDOM"
+: > "\$f"
+printf '%s\\n' "\$f"
+EOS
+chmod +x "$TMP/fakebin/mktemp"
+path=$(PATH="$TMP/fakebin:$PATH" bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_tmpfile f; tender_tmpfile g; echo \$f")
+assert_contains "shimmed tmpfile path has a space" "$path" "with space"
+[ -e "$path" ] && fail "tmpfile whose path has a space is still removed" "$path still exists" || pass "tmpfile whose path has a space is still removed"
 
 # ---------------------------------------------------------------- lib: log
 echo "-- lib: log"
@@ -149,6 +163,21 @@ assert_exit "bad cost still returns 0" 0 $RC
 assert_eq "bad cost logged as 0" "0" "$(tail -1 "$TENDER_LOG" | jq -r .cost)"
 assert_eq "bad cost row is still ok" "ok" "$(tail -1 "$TENDER_LOG" | jq -r .status)"
 
+# The key must reach the server, but never through any process's argv.
+rm -f "$STUB_LAST_AUTH"
+invoke read stub/ok "s" "m"
+assert_eq "key sent as a Bearer header" "Bearer test-key" "$(cat "$STUB_LAST_AUTH")"
+( invoke read stub/slowok "s" "m" ) >/dev/null 2>&1 &
+slow_pid=$!
+sleep 0.5
+argv_key=$(ps -axo command | grep -c "Bearer [t]est-key")
+argv_curl=$(ps -axo command | grep -c "[c]url")
+wait "$slow_pid"
+assert_eq "key never appears in argv" "0" "$argv_key"
+if [ "$argv_curl" -gt 0 ]; then pass "control: curl was running when argv was sampled"
+else fail "control: curl was running when argv was sampled" "no curl process seen"; fi
+assert_eq "slow call still authenticated" "Bearer test-key" "$(cat "$STUB_LAST_AUTH")"
+
 out=$(printf '```ts\nline1\nline2\n```\n' | bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_strip_fences")
 assert_eq "strip fences removes outer fences" "line1
 line2" "$out"
@@ -179,6 +208,12 @@ printf 'x\nconst token = "ghp_%s";\n' "$(printf 'a%.0s' $(seq 1 40))" > "$G/gh.t
 printf 'x\ny\npassword: "supersecretvalue123456"\n' > "$G/cfg.yml"
 printf 'const risk = "risk-assessment-configuration-value";\n' > "$G/risk.ts"
 printf 'class: "desk-lamp-extra-long-class-name"\n' > "$G/desk.yml"
+printf 'AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"\n' > "$G/settings.py"
+printf 'SECRET_KEY = "django-insecure-abcdefghijklmnop"\n' > "$G/django.py"
+printf 'x\n' > "$G/.envrc"
+printf 'const t = "xoxb-abcdefghijkl";\n' > "$G/slack.ts"
+printf 'const t = "eyJhbGciOiJIUzI1NiI.eyJzdWIiOiIxMjM0NTY.SflKxwRJSMeKKF2QT4";\n' > "$G/jwt.ts"
+printf 'KEY=longvaluewithoutquotes1234\nAPI_KEY=longvaluewithoutquotes1234\n' > "$G/unquoted.txt"
 printf 'x\n' > "$G/repo/build.log"; printf 'src\n' > "$G/repo/src.ts"
 (cd "$G/repo" && git init -q && printf 'build.log\n' > .gitignore)
 
@@ -211,6 +246,14 @@ guard 0 "$G/gh.ts";            assert_exit "github token refused" 2 $RC
 assert_contains "github token line number" "$ERR" "$G/gh.ts:2"
 guard 0 "$G/cfg.yml";          assert_exit "password assignment refused" 2 $RC
 assert_contains "password assignment line number" "$ERR" "$G/cfg.yml:3"
+guard 0 "$G/settings.py";      assert_exit "AWS_SECRET_ACCESS_KEY refused" 2 $RC
+guard 0 "$G/django.py";        assert_exit "SECRET_KEY with spaces refused" 2 $RC
+guard 0 "$G/slack.ts";         assert_exit "slack token refused" 2 $RC
+guard 0 "$G/jwt.ts";           assert_exit "jwt refused" 2 $RC
+guard 0 "$G/.envrc";           assert_exit ".envrc refused by denylist" 2 $RC
+# Documented limitation: only quoted values are scanned, so an unquoted
+# assignment passes. Asserted so a future regex change is a deliberate one.
+guard 0 "$G/unquoted.txt";     assert_exit "unquoted assignment passes (documented limitation)" 0 $RC
 guard 0 "$G/risk.ts";          assert_exit "risk-… is not an sk- key" 0 $RC
 guard 0 "$G/desk.yml";         assert_exit "desk-… is not an sk- key" 0 $RC
 
@@ -229,6 +272,10 @@ guard 0 "$G/link_to_env";     assert_exit "symlink to .env refused" 2 $RC
 assert_contains "symlink refusal names target" "$ERR" "-> $G/.env"
 guard 0 "$G/link_to_aws";     assert_exit "symlink into .aws refused" 2 $RC
 guard 0 "$G/link_to_ok";      assert_exit "symlink to plain file passes" 0 $RC
+ln -sf "$G/repo/build.log" "$G/link_to_ignored"
+guard 0 "$G/link_to_ignored"; assert_exit "symlink to a gitignored file refused" 2 $RC
+assert_contains "gitignored symlink refusal names target" "$ERR" "-> $G/repo/build.log"
+guard 1 "$G/link_to_ignored"; assert_exit "gitignored symlink allowed with flag" 0 $RC
 
 rm -f "$TENDER_LOG"; guard 0 "$G/.env"
 assert_eq "refusal logged" "refused" "$(tail -1 "$TENDER_LOG" | jq -r .status)"
@@ -267,6 +314,11 @@ assert_contains "system prompt is the analyst" "$(printf '%s' "$req" | jq -r '.m
 assert_eq "reader model used" "stub/ok" "$(printf '%s' "$req" | jq -r .model)"
 assert_eq "logged as read" "read" "$(tail -1 "$TENDER_LOG" | jq -r .mode)"
 assert_eq "logged file count" "2" "$(tail -1 "$TENDER_LOG" | jq -r .files)"
+
+printf 'plain\n' > "$G/qu\"ote.ts"
+run_read --question "q" --paths "$G/qu\"ote.ts"
+assert_exit "path with a double quote → 0" 0 $RC
+assert_contains "double quote escaped in file tag" "$(jq -r '.messages[1].content' "$STUB_LAST_REQUEST")" "<file path=\"$G/qu&quot;ote.ts\">"
 
 run_read --question "q" --paths "$G/.env";  assert_exit "guard refusal → 2" 2 $RC
 assert_contains "guard message shown" "$ERR" "denylist"
@@ -317,6 +369,18 @@ TENDER_WRITER_MODEL=stub/empty run_write --spec "s" --reference "$FX/user-servic
 assert_exit "empty completion → 1" 1 $RC
 assert_eq "empty completion leaves target untouched" "keep me" "$(cat "$target")"
 
+# A fence-only or whitespace-only completion must never truncate the target.
+for m in stub/fenceonly stub/blank; do
+  printf 'keep me\n' > "$target"
+  TENDER_WRITER_MODEL="$m" run_write --spec "s" --reference "$FX/user-service.ts" --target "$target"
+  assert_exit "$m with --target → 1" 1 $RC
+  assert_eq "$m leaves target untouched" "keep me" "$(cat "$target")"
+  assert_contains "$m says the target is untouched" "$ERR" "$target untouched"
+  TENDER_WRITER_MODEL="$m" run_write --spec "s" --reference "$FX/user-service.ts"
+  assert_exit "$m without --target → 1" 1 $RC
+  assert_eq "$m prints nothing on stdout" "" "$OUT"
+done
+
 run_write --spec "s" --reference "$G/.env";  assert_exit "guard on reference → 2" 2 $RC
 
 # ---------------------------------------------------------------- tender-usage
@@ -352,6 +416,14 @@ out=$("$SCRIPTS/tender-usage"); rc=$?
 assert_exit "bad line does not abort" 0 $rc
 assert_contains "bad line reported" "$out" "1 unparseable line(s) skipped"
 assert_contains "string cost counted as zero" "$out" "5 calls, 3 ok, 1 error, 1 refused, \$0.03"
+
+# Valid JSON with an unparseable ts: not a skipped line, just outside today/week.
+printf '{"ts":"not-a-date","repo":"alpha","mode":"read","model":"m/one","files":1,"prompt_tokens":1,"cached_tokens":0,"completion_tokens":1,"cost":0.5,"duration_ms":1,"status":"ok"}\n' >> "$TENDER_LOG"
+out=$("$SCRIPTS/tender-usage"); rc=$?
+assert_exit "unparseable ts does not abort" 0 $rc
+assert_contains "unparseable ts excluded from today" "$out" "5 calls, 3 ok, 1 error, 1 refused, \$0.03"
+assert_contains "unparseable ts excluded from week" "$out" "Week $(date -u +%G-W%V)"
+assert_not_contains "unparseable ts not counted anywhere" "$out" "\$0.53"
 
 # ---------------------------------------------------------------- tender-doctor
 echo "-- tender-doctor"

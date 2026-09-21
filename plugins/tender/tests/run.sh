@@ -17,7 +17,7 @@ fi
 if command -v shellcheck >/dev/null 2>&1; then
   echo "== shellcheck"
   files=""
-  for f in "$TESTS"/../hooks/check-* "$TESTS"/../scripts/tender-* "$TESTS"/../scripts/lib/*.sh "$TESTS"/*.sh; do
+  for f in "$TESTS"/../hooks/check-* "$TESTS"/../hooks/common.sh "$TESTS"/../scripts/tender-* "$TESTS"/../scripts/lib/*.sh "$TESTS"/*.sh; do
     [ -f "$f" ] && files="$files $f"
   done
   # shellcheck disable=SC2086

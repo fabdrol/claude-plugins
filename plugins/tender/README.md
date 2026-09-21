@@ -11,7 +11,9 @@ boilerplate, for a fraction of the cost.
 
 1. **Hooks** deny whole-file reads (`Read`, `cat`, `head`, `tail`, `less`,
    `more`, `sed -n`) over 350 lines and point at the skill. Targeted reads with
-   an offset/limit always pass, so edits are never blocked.
+   an offset/limit always pass, so edits are never blocked. On everything else
+   the hooks stay silent — they express no opinion rather than approving the
+   call — so your own permission prompts and settings rules still apply.
 2. **Scripts** `tender-read` and `tender-write` send the files to OpenRouter and
    return bullets or code. Claude never sees the file contents.
 3. **Skills** `/tender:read` and `/tender:write` tell Claude when and how to
@@ -60,8 +62,15 @@ tender-doctor
 ```
 
 Scripts live under the plugin root; in a session Claude uses
-`${CLAUDE_PLUGIN_ROOT}/scripts/…`. Exit codes: 0 ok, 1 error, 2 refused by the
-secrets guard.
+`${CLAUDE_PLUGIN_ROOT}/scripts/…`. To call them by name from your own shell,
+put that directory on `PATH` (or invoke them by full path):
+
+```bash
+export PATH="$HOME/.claude/plugins/cache/fabdrol/tender/0.1.0/scripts:$PATH"
+# substitute the installed version; ls ~/.claude/plugins/cache/fabdrol/tender/
+```
+
+Exit codes: 0 ok, 1 error, 2 refused by the secrets guard.
 
 ## What it doesn't do
 
@@ -81,4 +90,6 @@ bash tests/run.sh --benchmark   # needs OPENROUTER_API_KEY; measures token savin
 ```
 
 Derived from Spotify's [shunt](https://github.com/spotify/portal-ai-plugins)
-(Apache 2.0). The Portal transport was replaced with a direct OpenRouter client.
+(Apache 2.0), specifically
+[the `add-shunt-claude` branch](https://github.com/sorantis/portal-ai-plugins/tree/add-shunt-claude/plugins/shunt).
+The Portal transport was replaced with a direct OpenRouter client.

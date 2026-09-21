@@ -24,7 +24,7 @@ jq -rRn --arg today "$today" --arg week "$week" '
   [inputs] as $lines
   | ($lines | map(fromjson? // empty) | map(select((.ts | type) == "string"))) as $all
   | ($all | map(select(.ts[0:10] == $today))) as $t
-  | ($all | map(select((.ts | sub("Z$"; "") | strptime("%Y-%m-%dT%H:%M:%S") | strftime("%G-W%V")) == $week))) as $w
+  | ($all | map(select((try (.ts | sub("Z$"; "") | strptime("%Y-%m-%dT%H:%M:%S") | strftime("%G-W%V")) catch "") == $week))) as $w
   | section("Today \($today)"; $t), "", section("Week \($week)"; $w),
     (if ($lines | length) > ($all | length)
      then "", "\(($lines | length) - ($all | length)) unparseable line(s) skipped"

@@ -3,37 +3,12 @@
 # TENDER_MIN_LINES and points at tender-read. Targeted reads (offset/limit)
 # always pass. Fails open when tender is unconfigured or jq is missing.
 
-allow() {
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}\n'
-  exit 0
-}
-
-command -v jq >/dev/null 2>&1 || allow
-
-allow_note() {
-  jq -cn --arg c "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",additionalContext:$c}}'
-  exit 0
-}
-deny() {
-  jq -cn --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
-  exit 0
-}
-
-PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MIN_LINES="${TENDER_MIN_LINES:-350}"
-case "$MIN_LINES" in ''|*[!0-9]*) MIN_LINES=350 ;; esac
-
 input=$(cat)
 
-[ "${TENDER_DISABLED:-}" = "1" ] && allow
-
-if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-  session=$(printf '%s' "$input" | jq -r '.session_id // "nosession"')
-  marker="${TMPDIR:-/tmp}/tender-unconfigured-$session"
-  if [ -e "$marker" ]; then allow; fi
-  touch "$marker" 2>/dev/null
-  allow_note "tender is installed but OPENROUTER_API_KEY is unset, so large reads are not being delegated. Export the key (https://openrouter.ai/keys) and restart Claude Code to enable it."
-fi
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=common.sh
+. "$(dirname "$0")/common.sh"
+tender_hook_preamble
 
 file_path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')
 offset=$(printf '%s' "$input" | jq -r '.tool_input.offset // empty')
@@ -47,4 +22,4 @@ lines=$(wc -l < "$file_path" 2>/dev/null | tr -d ' ')
 case "$lines" in ''|*[!0-9]*) lines=0 ;; esac
 [ "$lines" -le "$MIN_LINES" ] && allow
 
-deny "File is $lines lines (threshold $MIN_LINES). Delegate it instead of reading it: run \`$PLUGIN_ROOT/scripts/tender-read --question \"<what you need to know>\" --paths $file_path\` (skill /tender:read). If you need exact lines for an edit, re-read with offset/limit for just that section."
+deny "File is $lines lines (threshold $MIN_LINES). Delegate it instead of reading it: run \`$PLUGIN_ROOT/scripts/tender-read --question \"<what you need to know>\" --paths $(shell_quote "$file_path")\` (skill /tender:read). If you need exact lines for an edit, re-read with offset/limit for just that section."
