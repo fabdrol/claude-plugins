@@ -117,10 +117,11 @@ TENDER_GUARD_BYPASSED=""
 # Prints the completion. Returns 1 on any failure (message on stderr, logged).
 tender_invoke() {
   local mode="$1" model="$2" system_file="$3" message_file="$4" nfiles="$5"
-  local body resp bytes rc err content pt ct out cost dur secs
+  local body resp bytes rc err content pt ct out cost dur secs curl_err curl_msg log_detail
 
   tender_tmpfile body || return 1
   tender_tmpfile resp || return 1
+  tender_tmpfile curl_err || return 1
 
   jq -n --arg model "$model" --rawfile sys "$system_file" --rawfile msg "$message_file" \
     '{model: $model,
@@ -142,17 +143,23 @@ tender_invoke() {
     -H "Content-Type: application/json" \
     -H "HTTP-Referer: https://github.com/fabdrol/claude-plugins" \
     -H "X-Title: tender" \
-    --data-binary "@$body" -o "$resp" "$TENDER_API_URL" 2>/dev/null
+    --data-binary "@$body" -o "$resp" "$TENDER_API_URL" 2>"$curl_err"
   rc=$?
   secs=$SECONDS
   dur=$((secs * 1000))
 
   if [ "$rc" -ne 0 ]; then
     echo "Error: request to $TENDER_API_URL failed (curl exit $rc)." >&2
+    if [ -s "$curl_err" ]; then
+      sed 's/^/  /' "$curl_err" >&2
+    fi
     if [ "$rc" -eq 28 ]; then
       echo "  Timed out after ${TENDER_TIMEOUT}s. Split the work into smaller calls or raise TENDER_TIMEOUT." >&2
     fi
-    tender_log "$mode" "$model" "$nfiles" 0 0 0 0 "$dur" error "curl exit $rc"
+    curl_msg=$(head -1 "$curl_err")
+    log_detail="curl exit $rc"
+    [ -n "$curl_msg" ] && log_detail="$curl_msg"
+    tender_log "$mode" "$model" "$nfiles" 0 0 0 0 "$dur" error "$log_detail"
     return 1
   fi
 
@@ -180,7 +187,14 @@ tender_invoke() {
   pt=$(jq -r '.usage.prompt_tokens // 0' "$resp")
   ct=$(jq -r '.usage.prompt_tokens_details.cached_tokens // 0' "$resp")
   out=$(jq -r '.usage.completion_tokens // 0' "$resp")
-  cost=$(jq -r '.usage.cost // 0' "$resp")
+  cost=$(jq -r '(.usage.cost // 0) | tostring' "$resp")
+  case "$cost" in
+    ''|*[!0-9.eE+-]*) cost=0 ;;
+  esac
+  case "$cost" in
+    *[0-9]*) ;;
+    *) cost=0 ;;
+  esac
   tender_log "$mode" "$model" "$nfiles" "$pt" "$ct" "$out" "$cost" "$dur" ok
 
   TENDER_LAST_SUMMARY="[tender $mode: $nfiles file(s), ${pt} in (${ct} cached) / ${out} out, \$${cost}, ${secs}s, $model${TENDER_GUARD_BYPASSED:+, secrets guard OFF}]"

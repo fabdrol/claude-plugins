@@ -8,6 +8,7 @@ Behaviour is chosen by the requested model's suffix:
   stub/error    OpenRouter-style error envelope, HTTP 400
   stub/garbage  non-JSON body
   stub/slow     sleeps 5 s before answering
+  stub/badcost  ok response with a non-numeric usage.cost ("n/a")
 Every request body is written to $STUB_LAST_REQUEST for assertions.
 Usage: openrouter-stub.py [port]   (default 48123)
 """
@@ -52,10 +53,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, b"<html>not json</html>")
         if mode == "error":
             return self._json(400, {"error": {"message": "stub failure", "code": 400}})
+        if mode == "badcost":
+            usage["cost"] = "n/a"
         content = {
             "ok": "- STUB ANSWER\n  - model: %s" % model,
             "fenced": "```ts\nexport const generated = 1;\n```",
             "empty": "",
+            "badcost": "- STUB ANSWER\n  - model: %s" % model,
         }.get(mode, "- STUB ANSWER")
         self._json(200, {
             "id": "stub",

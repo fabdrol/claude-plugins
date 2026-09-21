@@ -139,6 +139,16 @@ TENDER_API_URL="http://127.0.0.1:1/x" invoke read stub/ok "s" "m"
 assert_exit "connection refused returns 1" 1 $RC
 assert_contains "connection refused reported" "$ERR" "curl exit"
 
+TENDER_API_URL="http://nonexistent.invalid/x" invoke read stub/ok "s" "m"
+assert_exit "dns failure returns 1" 1 $RC
+assert_contains "dns failure shows curl text" "$ERR" "resolve"
+assert_contains "dns failure logged with curl text" "$(tail -1 "$TENDER_LOG" | jq -r .error)" "resolve"
+
+invoke read stub/badcost "s" "m"
+assert_exit "bad cost still returns 0" 0 $RC
+assert_eq "bad cost logged as 0" "0" "$(tail -1 "$TENDER_LOG" | jq -r .cost)"
+assert_eq "bad cost row is still ok" "ok" "$(tail -1 "$TENDER_LOG" | jq -r .status)"
+
 out=$(printf '```ts\nline1\nline2\n```\n' | bash -c ". '$SCRIPTS/lib/openrouter.sh'; tender_strip_fences")
 assert_eq "strip fences removes outer fences" "line1
 line2" "$out"
