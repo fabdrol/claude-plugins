@@ -12,16 +12,21 @@ fi
 today=$(date -u +%Y-%m-%d)
 week=$(date -u +%G-W%V)
 
-jq -rn --arg today "$today" --arg week "$week" '
+jq -rRn --arg today "$today" --arg week "$week" '
   def money: (. * 10000 | round / 10000);
+  def cost: ((.cost | numbers) // 0);
   def section(name; rows):
-    "\(name): \(rows | length) calls, \(rows | map(select(.status == "ok")) | length) ok, \(rows | map(select(.status == "error")) | length) error, \(rows | map(select(.status == "refused")) | length) refused, $\(rows | map(.cost // 0) | add // 0 | money)",
+    "\(name): \(rows | length) calls, \(rows | map(select(.status == "ok")) | length) ok, \(rows | map(select(.status == "error")) | length) error, \(rows | map(select(.status == "refused")) | length) refused, $\(rows | map(cost) | add // 0 | money)",
     (rows | map(select(.model != "" and .model != null)) | group_by(.model) | .[]
-      | "  model \(.[0].model): \(length) calls, $\(map(.cost // 0) | add | money)"),
+      | "  model \(.[0].model): \(length) calls, $\(map(cost) | add | money)"),
     (rows | group_by(.repo) | .[]
-      | "  repo  \(.[0].repo): \(length) calls, $\(map(.cost // 0) | add | money)");
-  [inputs | select(.ts != null)] as $all
+      | "  repo  \(.[0].repo): \(length) calls, $\(map(cost) | add | money)");
+  [inputs] as $lines
+  | ($lines | map(fromjson? // empty) | map(select((.ts | type) == "string"))) as $all
   | ($all | map(select(.ts[0:10] == $today))) as $t
   | ($all | map(select((.ts | sub("Z$"; "") | strptime("%Y-%m-%dT%H:%M:%S") | strftime("%G-W%V")) == $week))) as $w
-  | section("Today \($today)"; $t), "", section("Week \($week)"; $w)
+  | section("Today \($today)"; $t), "", section("Week \($week)"; $w),
+    (if ($lines | length) > ($all | length)
+     then "", "\(($lines | length) - ($all | length)) unparseable line(s) skipped"
+     else empty end)
 ' "$TENDER_LOG"

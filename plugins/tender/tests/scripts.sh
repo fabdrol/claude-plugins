@@ -346,4 +346,11 @@ assert_contains "week header" "$out" "Week $(date -u +%G-W%V)"
 assert_not_contains "old row excluded from week" "$out" "\$9.03"
 assert_not_contains "old row excluded from today" "$out" "\$9"
 
+printf '{bad json\n' >> "$TENDER_LOG"
+printf '{"ts":"%s","repo":"alpha","mode":"read","model":"m/one","files":1,"prompt_tokens":1,"cached_tokens":0,"completion_tokens":1,"cost":"n/a","duration_ms":1,"status":"ok"}\n' "$today" >> "$TENDER_LOG"
+out=$("$SCRIPTS/tender-usage"); rc=$?
+assert_exit "bad line does not abort" 0 $rc
+assert_contains "bad line reported" "$out" "1 unparseable line(s) skipped"
+assert_contains "string cost counted as zero" "$out" "5 calls, 3 ok, 1 error, 1 refused, \$0.03"
+
 report
